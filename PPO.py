@@ -63,10 +63,12 @@ def _remove_dir(directory):
         # Iterate over all the files and subdirectories in the directory
         for item in os.listdir(directory):
             item_path = os.path.join(directory, item)
-            # Check if it's a file or a subdirectory
+            # Check if it's a file
             if os.path.isfile(item_path):
-                # If it's a file, delete it
-                os.unlink(item_path)
+                # Check if the filename starts with "events"
+                if item.startswith("events"):
+                    # If it does, delete the file
+                    os.unlink(item_path)
             else:
                 # If it's a subdirectory, delete it recursively
                 shutil.rmtree(item_path)
@@ -160,39 +162,33 @@ class PPO:
         self.agent = ActorCritic(self.envs).to(self.device)
         self.optimizer = optim.Adam(self.agent.parameters(), lr=self.learning_rate, eps=1e-5)
 
-    def _compute_advantage(self, next_obs, rewards, next_done, dones, values, ):
-        # bootstrap value if not done
-        with (torch.no_grad()):
+    def _compute_advantage(self, next_obs, rewards, next_done, dones, values):
+        with torch.no_grad():
             next_value = self.agent.get_value(next_obs).reshape(1, -1)
+
+            # Prepare tensors
+            next_non_terminal = 1.0 - torch.cat((dones[1:], next_done.unsqueeze(0)))
+            values = torch.cat((values, next_value), dim=0)
+
             if self.gae:
+                deltas = rewards + self.gamma * values[1:] * next_non_terminal - values[:-1]
                 advantages = torch.zeros_like(rewards).to(self.device)
-                last_gae_lam = 0
-                for t in reversed(range(self.num_steps)):
-                    if t == self.num_steps - 1:
-                        next_non_terminal = 1.0 - next_done
-                        next_values = next_value
-                    else:
-                        next_non_terminal = 1.0 - dones[t + 1]
-                        next_values = values[t + 1]
-                    delta = rewards[t] + self.gamma * next_values * next_non_terminal - values[t]
-                    advantages[
-                        t] = last_gae_lam = delta + self.gamma * self.gae_lambda * next_non_terminal * last_gae_lam
-                returns = advantages + values
+                # Calculate advantages using reverse cumulative sum
+                advantages[-1] = deltas[-1]
+                for t in reversed(range(self.num_steps - 1)):
+                    advantages[t] = deltas[t] + self.gamma * self.gae_lambda * next_non_terminal[t] * advantages[t + 1]
+                returns = advantages + values[:-1]
             else:
                 returns = torch.zeros_like(rewards).to(self.device)
-                for t in reversed(range(self.num_steps)):
-                    if t == self.num_steps - 1:
-                        next_non_terminal = 1.0 - next_done
-                        next_return = next_value
-                    else:
-                        next_non_terminal = 1.0 - dones[t + 1]
-                        next_return = returns[t + 1]
-                    returns[t] = rewards[t] + self.gamma * next_non_terminal * next_return
-                advantages = returns - values
+                returns[-1] = rewards[-1] + self.gamma * next_non_terminal[-1] * next_value
+                for t in reversed(range(self.num_steps - 1)):
+                    returns[t] = rewards[t] + self.gamma * next_non_terminal[t] * returns[t + 1]
+                advantages = returns - values[:-1]
 
-            return advantages, returns
+        return advantages, returns
 
     def train(self):
+        self.agent.train()
         print(f"TRAINING {self.run_name}")
         device = self.device
 
@@ -279,7 +275,7 @@ class PPO:
             torch.save(self.agent.state_dict(), f'runs/{self.run_name}/{self.run_name}_agent.pth')
 
     def optimize(self, obs, log_probs, actions, advantages, returns, values, global_step, start_time):
-        # flatten the batch
+        # Flatten the batch
         b_obs = obs.reshape((-1,) + self.envs.single_observation_space.shape)
         b_logprobs = log_probs.reshape(-1)
         b_actions = actions.reshape((-1,) + self.envs.single_action_space.shape)
@@ -291,10 +287,6 @@ class PPO:
         b_inds = np.arange(self.batch_size)
         clip_fracs = []
 
-        pg_loss = 0
-        v_loss = 0
-        entropy_loss = 0
-
         for epoch in range(self.update_epochs):
             np.random.shuffle(b_inds)
             for start in range(0, self.batch_size, self.minibatch_size):
@@ -304,26 +296,32 @@ class PPO:
                 _, new_log_prob, entropy, new_value = self.agent.get_action_and_value(b_obs[mb_inds],
                                                                                       b_actions[mb_inds])
                 log_ratio = new_log_prob - b_logprobs[mb_inds]
-                ratio = log_ratio.exp()
+                ratio = torch.exp(log_ratio)
 
                 with torch.no_grad():
-                    # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                    # Calculate approx_kl
                     old_approx_kl = (-log_ratio).mean()
                     approx_kl = ((ratio - 1) - log_ratio).mean()
-                    clip_fracs += [((ratio - 1.0).abs() > self.clip_coef).float().mean().item()]
+                    clip_fracs.append(((ratio - 1.0).abs() > self.clip_coef).float().mean().item())
 
                 mb_advantages = b_advantages[mb_inds]
                 if self.norm_adv:
                     mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
 
+                # Compute policy loss
                 pg_loss = _compute_policy_loss(mb_advantages, ratio, self.clip_coef)
 
-                v_loss = _compute_value_loss(new_value, self.clip_vloss, self.clip_coef,
-                                             b_returns, b_values, mb_inds)
+                # Compute value loss
+                v_loss = _compute_value_loss(new_value, self.clip_vloss, self.clip_coef, b_returns, b_values,
+                                                  mb_inds)
 
+                # Compute entropy loss
                 entropy_loss = entropy.mean()
+
+                # Total loss
                 loss = pg_loss - self.ent_coef * entropy_loss + v_loss * self.vf_coef
 
+                # Optimize the agent's parameters
                 self.optimizer.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.agent.parameters(), self.max_grad_norm)
@@ -333,11 +331,12 @@ class PPO:
                 if approx_kl > self.target_kl:
                     break
 
+        # Calculate explained variance
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
-        # TRY NOT TO MODIFY: record rewards for plotting purposes
+        # Record rewards for plotting purposes
         if self.track:
             self.writer.add_scalar("charts/learning_rate", self.optimizer.param_groups[0]["lr"], global_step)
             self.writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
@@ -347,10 +346,10 @@ class PPO:
             self.writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
             self.writer.add_scalar("losses/clipfrac", np.mean(clip_fracs), global_step)
             self.writer.add_scalar("losses/explained_variance", explained_var, global_step)
-            # print("SPS:", int(global_step / (time.time() - start_time)))
             self.writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
     def validate(self):
+        self.agent.eval()
         print(f"VALIDATION {self.run_name}")
         device = self.device
 

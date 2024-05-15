@@ -32,7 +32,7 @@ class ActorCritic(nn.Module):
     def get_value(self, x):
         return self.critic(x)
 
-    def get_action_and_value(self, x, action=None, deterministic=False):
+    def get_action_and_value_old(self, x, action=None, deterministic=False):
         action_mean = self.actor_mean(x)
         action_log_std = self.actor_log_std.expand_as(action_mean)
         action_std = torch.exp(action_log_std)
@@ -42,3 +42,29 @@ class ActorCritic(nn.Module):
         if deterministic:
             action = action_mean
         return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
+
+    def get_action_and_value(self, x, action=None, deterministic=False):
+        # Compute action mean and log standard deviation
+        action_mean = self.actor_mean(x)
+        action_log_std = self.actor_log_std.expand_as(action_mean)
+        action_std = torch.exp(action_log_std)
+
+        # Create the normal distribution
+        probs = Normal(action_mean, action_std)
+
+        # Sample action if not provided, otherwise use the deterministic option if specified
+        if action is None:
+            if deterministic:
+                action = action_mean
+            else:
+                action = probs.sample()
+
+        # Compute log probability and entropy of the action
+        log_prob = probs.log_prob(action).sum(dim=-1)
+        entropy = probs.entropy().sum(dim=-1)
+
+        # Compute the value from the critic
+        value = self.critic(x)
+
+        return action, log_prob, entropy, value
+
