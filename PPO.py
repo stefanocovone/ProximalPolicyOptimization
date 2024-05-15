@@ -370,7 +370,7 @@ class PPO:
 
             while episode_step < self.max_episode_steps:
                 with torch.no_grad():
-                    action, _, _, _ = self.agent.get_action_and_value(next_obs)
+                    action, _, _, _ = self.agent.get_action_and_value(next_obs, deterministic=True)
 
                 observations[episode][episode_step] = next_obs
                 control_actions[episode][episode_step] = action
@@ -387,8 +387,8 @@ class PPO:
                     cumulative_rewards[episode - 1] = episodic_return
                     print(f"episode={episode}, episodic_return={episodic_return}")
                     if self.track:
-                        self.writer.add_scalar("charts/episodic_return", episodic_return, episode*int(episodic_length[0]))
-                        self.writer.add_scalar("charts/episodic_length", episodic_length, episode*int(episodic_length[0]))
+                        self.writer.add_scalar("charts/validation_episodic_return",
+                                               episodic_return, episode*int(episodic_length[0]))
                     if episode == num_episodes:
                         break
 
