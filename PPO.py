@@ -12,6 +12,8 @@ from torch.utils.tensorboard import SummaryWriter
 
 from ActorCritic import ActorCritic
 
+from customPendulum import StableInit
+
 
 def make_env(gym_id, seed, idx, capture_video, run_name, max_episode_steps):
     def thunk():
@@ -21,11 +23,13 @@ def make_env(gym_id, seed, idx, capture_video, run_name, max_episode_steps):
         if capture_video:
             if idx == 0:
                 env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
-        env = gym.wrappers.ClipAction(env)
-        env = gym.wrappers.NormalizeObservation(env)
-        env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
+        # env = gym.wrappers.ClipAction(env)
         env = gym.wrappers.NormalizeReward(env)
-        env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
+        # env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
+        # env = gym.wrappers.NormalizeObservation(env)
+        # env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
+        if gym_id == "Pendulum-v1":
+            env = StableInit(env)
         # env.seed(seed)
         env.action_space.seed(seed)
         env.observation_space.seed(seed)
@@ -197,6 +201,7 @@ class PPO:
         cumulative_rewards = np.empty(num_episodes)
         observations = np.empty((num_episodes, self.max_episode_steps, *self.envs.observation_space.shape))
         control_actions = np.empty((num_episodes, self.max_episode_steps, *self.envs.action_space.shape))
+        control_actions_std = np.empty((num_episodes, self.max_episode_steps, *self.envs.action_space.shape))
 
         # ALGO Logic: Storage setup
         obs = torch.zeros((self.num_steps, self.num_envs) + self.envs.single_observation_space.shape).to(device)
@@ -235,13 +240,14 @@ class PPO:
 
                 # ALGO LOGIC: action logic
                 with torch.no_grad():
-                    action, logprob, _, value = self.agent.get_action_and_value(next_obs)
+                    action, logprob, _, value, action_std = self.agent.get_action_and_value(next_obs)
                     values[step] = value.flatten()
                 actions[step] = action
                 log_probs[step] = logprob
 
                 observations[episode][episode_step] = next_obs
                 control_actions[episode][episode_step] = action
+                control_actions_std[episode][episode_step] = action_std
 
                 # TRY NOT TO MODIFY: execute the game and log data.
                 next_obs, reward, terminated, truncated, info = self.envs.step(action.cpu().numpy())
@@ -272,7 +278,7 @@ class PPO:
                      observations=observations,
                      control_actions=control_actions,
                      )
-            torch.save(self.agent.state_dict(), f'runs/{self.run_name}/{self.run_name}_agent.pth')
+            torch.save(self.agent.state_dict(), f'runs/{self.run_name}/{self.run_name}_agent.pt')
 
     def optimize(self, obs, log_probs, actions, advantages, returns, values, global_step, start_time):
         # Flatten the batch
@@ -293,8 +299,8 @@ class PPO:
                 end = start + self.minibatch_size
                 mb_inds = b_inds[start:end]
 
-                _, new_log_prob, entropy, new_value = self.agent.get_action_and_value(b_obs[mb_inds],
-                                                                                      b_actions[mb_inds])
+                _, new_log_prob, entropy, new_value, _ = self.agent.get_action_and_value(b_obs[mb_inds],
+                                                                                         b_actions[mb_inds])
                 log_ratio = new_log_prob - b_logprobs[mb_inds]
                 ratio = torch.exp(log_ratio)
 
@@ -313,7 +319,7 @@ class PPO:
 
                 # Compute value loss
                 v_loss = _compute_value_loss(new_value, self.clip_vloss, self.clip_coef, b_returns, b_values,
-                                                  mb_inds)
+                                             mb_inds)
 
                 # Compute entropy loss
                 entropy_loss = entropy.mean()
@@ -353,13 +359,14 @@ class PPO:
         print(f"VALIDATION {self.run_name}")
         device = self.device
 
-        self.agent.load_state_dict(torch.load(f'runs/{self.run_name}/{self.run_name}_agent.pth'))
+        self.agent.load_state_dict(torch.load(f'runs/{self.run_name}/{self.run_name}_agent.pt'))
 
         # RESULTS: variables to store results
         num_episodes = self.num_validation_episodes
         cumulative_rewards = np.empty(num_episodes)
         observations = np.empty((num_episodes, self.max_episode_steps, *self.envs.observation_space.shape))
         control_actions = np.empty((num_episodes, self.max_episode_steps, *self.envs.action_space.shape))
+        control_actions_std = np.empty((num_episodes, self.max_episode_steps, *self.envs.action_space.shape))
 
         next_obs, _ = self.envs.reset()
         next_obs = torch.Tensor(next_obs).to(device)
@@ -369,10 +376,11 @@ class PPO:
 
             while episode_step < self.max_episode_steps:
                 with torch.no_grad():
-                    action, _, _, _ = self.agent.get_action_and_value(next_obs, deterministic=True)
+                    action, _, _, _, action_std = self.agent.get_action_and_value(next_obs, deterministic=False)
 
                 observations[episode][episode_step] = next_obs
                 control_actions[episode][episode_step] = action
+                control_actions_std[episode][episode_step] = action_std
 
                 # TRY NOT TO MODIFY: execute the game and log data.
                 next_obs, reward, terminated, truncated, info = self.envs.step(action.cpu().numpy())
@@ -387,7 +395,7 @@ class PPO:
                     print(f"episode={episode}, episodic_return={episodic_return}")
                     if self.track:
                         self.writer.add_scalar("charts/validation_episodic_return",
-                                               episodic_return, episode*int(episodic_length[0]))
+                                               episodic_return, episode * int(episodic_length[0]))
                     if episode == num_episodes:
                         break
 
@@ -396,6 +404,7 @@ class PPO:
                      cumulative_rewards=cumulative_rewards,
                      observations=observations,
                      control_actions=control_actions,
+                     control_actions_std=control_actions_std,
                      )
 
     def close(self):

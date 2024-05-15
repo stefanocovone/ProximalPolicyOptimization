@@ -32,17 +32,6 @@ class ActorCritic(nn.Module):
     def get_value(self, x):
         return self.critic(x)
 
-    def get_action_and_value_old(self, x, action=None, deterministic=False):
-        action_mean = self.actor_mean(x)
-        action_log_std = self.actor_log_std.expand_as(action_mean)
-        action_std = torch.exp(action_log_std)
-        probs = Normal(action_mean, action_std)
-        if action is None:
-            action = probs.sample()
-        if deterministic:
-            action = action_mean
-        return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(x)
-
     def get_action_and_value(self, x, action=None, deterministic=False):
         # Compute action mean and log standard deviation
         action_mean = self.actor_mean(x)
@@ -66,5 +55,5 @@ class ActorCritic(nn.Module):
         # Compute the value from the critic
         value = self.critic(x)
 
-        return action, log_prob, entropy, value
+        return action, log_prob, entropy, value, action_std
 
