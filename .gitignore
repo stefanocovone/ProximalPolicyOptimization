@@ -31,3 +31,6 @@
 customPendulum.py
 test_PPO.py
 /videos/
+pend_traj.py
+/Figures/
+/results.txt

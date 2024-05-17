@@ -15,26 +15,26 @@ from ActorCritic import ActorCritic
 from customPendulum import StableInit
 
 
+def record_trigger(episode_id: int) -> bool:
+
+    episodes = [0, 30, 100, 150, 199, 200, 250, 350, 450]
+
+    return episode_id in episodes
+
+
 def make_env(gym_id, seed, idx, capture_video, run_name, max_episode_steps):
     def thunk():
         env = gym.make(gym_id, render_mode='rgb_array')
         env._max_episode_steps = max_episode_steps
         env = gym.wrappers.RecordEpisodeStatistics(env)
-        if capture_video:
-            if idx == 0:
-                env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
-        # env = gym.wrappers.ClipAction(env)
+        if capture_video and idx == 0:
+            env = gym.wrappers.RecordVideo(env, f"videos/{run_name}", episode_trigger=record_trigger)
         env = gym.wrappers.NormalizeReward(env)
-        # env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
-        # env = gym.wrappers.NormalizeObservation(env)
-        # env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
         if gym_id == "Pendulum-v1":
             env = StableInit(env)
-        # env.seed(seed)
         env.action_space.seed(seed)
         env.observation_space.seed(seed)
         return env
-
     return thunk
 
 
@@ -46,15 +46,10 @@ def _compute_policy_loss(mb_advantages, ratio, clip_coef):
 
 
 def _compute_value_loss(new_value, clip_vloss, clip_coef, b_returns, b_values, mb_inds):
-    # Value loss
     new_value = new_value.view(-1)
     if clip_vloss:
         v_loss_unclipped = (new_value - b_returns[mb_inds]) ** 2
-        v_clipped = b_values[mb_inds] + torch.clamp(
-            new_value - b_values[mb_inds],
-            -clip_coef,
-            clip_coef,
-        )
+        v_clipped = b_values[mb_inds] + torch.clamp(new_value - b_values[mb_inds], -clip_coef, clip_coef)
         v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
         v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
         return 0.5 * v_loss_max.mean()
@@ -64,17 +59,11 @@ def _compute_value_loss(new_value, clip_vloss, clip_coef, b_returns, b_values, m
 
 def _remove_dir(directory):
     if os.path.exists(directory):
-        # Iterate over all the files and subdirectories in the directory
         for item in os.listdir(directory):
             item_path = os.path.join(directory, item)
-            # Check if it's a file
-            if os.path.isfile(item_path):
-                # Check if the filename starts with "events"
-                if item.startswith("events"):
-                    # If it does, delete the file
-                    os.unlink(item_path)
-            else:
-                # If it's a subdirectory, delete it recursively
+            if os.path.isfile(item_path) and item.startswith("events"):
+                os.unlink(item_path)
+            elif os.path.isdir(item_path):
                 shutil.rmtree(item_path)
 
 
@@ -169,15 +158,12 @@ class PPO:
     def _compute_advantage(self, next_obs, rewards, next_done, dones, values):
         with torch.no_grad():
             next_value = self.agent.get_value(next_obs).reshape(1, -1)
-
-            # Prepare tensors
             next_non_terminal = 1.0 - torch.cat((dones[1:], next_done.unsqueeze(0)))
             values = torch.cat((values, next_value), dim=0)
 
             if self.gae:
                 deltas = rewards + self.gamma * values[1:] * next_non_terminal - values[:-1]
                 advantages = torch.zeros_like(rewards).to(self.device)
-                # Calculate advantages using reverse cumulative sum
                 advantages[-1] = deltas[-1]
                 for t in reversed(range(self.num_steps - 1)):
                     advantages[t] = deltas[t] + self.gamma * self.gae_lambda * next_non_terminal[t] * advantages[t + 1]
@@ -201,7 +187,6 @@ class PPO:
         cumulative_rewards = np.empty(num_episodes)
         observations = np.empty((num_episodes, self.max_episode_steps, *self.envs.observation_space.shape))
         control_actions = np.empty((num_episodes, self.max_episode_steps, *self.envs.action_space.shape))
-        control_actions_std = np.empty((num_episodes, self.max_episode_steps, *self.envs.action_space.shape))
 
         # ALGO Logic: Storage setup
         obs = torch.zeros((self.num_steps, self.num_envs) + self.envs.single_observation_space.shape).to(device)
@@ -240,14 +225,13 @@ class PPO:
 
                 # ALGO LOGIC: action logic
                 with torch.no_grad():
-                    action, logprob, _, value, action_std = self.agent.get_action_and_value(next_obs)
+                    action, logprob, _, value = self.agent.get_action_and_value(next_obs)
                     values[step] = value.flatten()
                 actions[step] = action
                 log_probs[step] = logprob
 
                 observations[episode][episode_step] = next_obs
                 control_actions[episode][episode_step] = action
-                control_actions_std[episode][episode_step] = action_std
 
                 # TRY NOT TO MODIFY: execute the game and log data.
                 next_obs, reward, terminated, truncated, info = self.envs.step(action.cpu().numpy())
@@ -299,8 +283,8 @@ class PPO:
                 end = start + self.minibatch_size
                 mb_inds = b_inds[start:end]
 
-                _, new_log_prob, entropy, new_value, _ = self.agent.get_action_and_value(b_obs[mb_inds],
-                                                                                         b_actions[mb_inds])
+                _, new_log_prob, entropy, new_value = self.agent.get_action_and_value(b_obs[mb_inds],
+                                                                                      b_actions[mb_inds])
                 log_ratio = new_log_prob - b_logprobs[mb_inds]
                 ratio = torch.exp(log_ratio)
 
@@ -333,9 +317,8 @@ class PPO:
                 nn.utils.clip_grad_norm_(self.agent.parameters(), self.max_grad_norm)
                 self.optimizer.step()
 
-            if self.target_kl is not None:
-                if approx_kl > self.target_kl:
-                    break
+            if self.target_kl is not None and approx_kl > self.target_kl:
+                break
 
         # Calculate explained variance
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
@@ -354,7 +337,7 @@ class PPO:
             self.writer.add_scalar("losses/explained_variance", explained_var, global_step)
             self.writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
-    def validate(self):
+    def validate(self, deterministic=False):
         self.agent.eval()
         print(f"VALIDATION {self.run_name}")
         device = self.device
@@ -367,6 +350,7 @@ class PPO:
         observations = np.empty((num_episodes, self.max_episode_steps, *self.envs.observation_space.shape))
         control_actions = np.empty((num_episodes, self.max_episode_steps, *self.envs.action_space.shape))
         control_actions_std = np.empty((num_episodes, self.max_episode_steps, *self.envs.action_space.shape))
+        control_actions_mean = np.empty((num_episodes, self.max_episode_steps, *self.envs.action_space.shape))
 
         next_obs, _ = self.envs.reset()
         next_obs = torch.Tensor(next_obs).to(device)
@@ -376,11 +360,12 @@ class PPO:
 
             while episode_step < self.max_episode_steps:
                 with torch.no_grad():
-                    action, _, _, _, action_std = self.agent.get_action_and_value(next_obs, deterministic=False)
+                    action, action_mean, action_std = self.agent.get_action(next_obs, deterministic)
 
                 observations[episode][episode_step] = next_obs
                 control_actions[episode][episode_step] = action
                 control_actions_std[episode][episode_step] = action_std
+                control_actions_mean[episode][episode_step] = action_mean
 
                 # TRY NOT TO MODIFY: execute the game and log data.
                 next_obs, reward, terminated, truncated, info = self.envs.step(action.cpu().numpy())
@@ -400,11 +385,16 @@ class PPO:
                         break
 
         if self.track:
-            np.savez(f"runs/{self.run_name}/{self.run_name}_validation.npz",
+            if deterministic:
+                save_path = f"runs/{self.run_name}/{self.run_name}_validation_det.npz"
+            else:
+                save_path = f"runs/{self.run_name}/{self.run_name}_validation.npz"
+            np.savez(save_path,
                      cumulative_rewards=cumulative_rewards,
                      observations=observations,
                      control_actions=control_actions,
                      control_actions_std=control_actions_std,
+                     control_actions_mean=control_actions_mean,
                      )
 
     def close(self):
