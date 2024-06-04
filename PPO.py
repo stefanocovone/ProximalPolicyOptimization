@@ -34,7 +34,7 @@ def make_env(gym_id, seed, idx, capture_video, run_name, max_episode_steps, env_
             env._max_episode_steps = max_episode_steps
             # env = DeterministicReset(env)
             env = FlattenAction(env)
-            env = SingleAgentReward(env, k_4=0)
+            env = SingleAgentReward(env, k_4=1)
             env = FlattenObservation(env)
         else:
             env = gym.make(gym_id, render_mode='rgb_array')
@@ -272,6 +272,14 @@ class PPO:
 
             advantages, returns = self._compute_advantage(next_obs, rewards, next_done, dones, values)
             self.optimize(obs, log_probs, actions, advantages, returns, values, global_step, start_time)
+
+            if self.track and (episode+1) % 1000 == 0:
+                np.savez(f"runs/{self.run_name}/{self.run_name}_training.npz",
+                         cumulative_rewards=cumulative_rewards,
+                         observations=observations.cpu().numpy(),
+                         control_actions=control_actions.cpu().numpy(),
+                         )
+                torch.save(self.agent.state_dict(), f'runs/{self.run_name}/{self.run_name}_agent.pt')
 
         if self.track:
             np.savez(f"runs/{self.run_name}/{self.run_name}_training.npz",
