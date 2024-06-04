@@ -369,10 +369,10 @@ class PPO:
         # RESULTS: variables to store results
         num_episodes = self.num_validation_episodes
         cumulative_rewards = np.empty(num_episodes)
-        observations = np.empty((num_episodes, self.max_episode_steps, *self.envs.observation_space.shape))
-        control_actions = np.empty((num_episodes, self.max_episode_steps, *self.envs.action_space.shape))
-        control_actions_std = np.empty((num_episodes, self.max_episode_steps, *self.envs.action_space.shape))
-        control_actions_mean = np.empty((num_episodes, self.max_episode_steps, *self.envs.action_space.shape))
+        observations = torch.zeros((num_episodes, self.max_episode_steps, *self.envs.observation_space.shape)).to(device)
+        control_actions = torch.zeros((num_episodes, self.max_episode_steps, *self.envs.action_space.shape)).to(device)
+        control_actions_std = torch.zeros((num_episodes, self.max_episode_steps, *self.envs.action_space.shape)).to(device)
+        control_actions_mean = torch.zeros((num_episodes, self.max_episode_steps, *self.envs.action_space.shape)).to(device)
 
         next_obs, _ = self.envs.reset()
         next_obs = torch.Tensor(next_obs).to(device)
@@ -413,10 +413,10 @@ class PPO:
                 save_path = f"runs/{self.run_name}/{self.run_name}_validation.npz"
             np.savez(save_path,
                      cumulative_rewards=cumulative_rewards,
-                     observations=observations,
-                     control_actions=control_actions,
-                     control_actions_std=control_actions_std,
-                     control_actions_mean=control_actions_mean,
+                     observations=observations.cpu().numpy(),
+                     control_actions=control_actions.cpu().numpy(),
+                     control_actions_std=control_actions_std.cpu().numpy(),
+                     control_actions_mean=control_actions_mean.cpu().numpy(),
                      )
 
     def close(self):
