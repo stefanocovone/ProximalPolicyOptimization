@@ -8,32 +8,46 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from gymnasium.wrappers import FlattenObservation
 from torch.utils.tensorboard import SummaryWriter
 
 from ActorCritic import ActorCritic
 
 from customPendulum import StableInit
+from shepherding.wrappers import DeterministicReset, SingleAgentReward, FlattenAction
 
 
 def record_trigger(episode_id: int) -> bool:
 
-    episodes = [0, 30, 100, 150, 199, 200, 250, 350, 450]
+    episodes = [0, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 10050, 10100, 10120, 10180]
+    record = (episode_id % 1000 == 0)
+    # val_ep = [10010, 10020, 10040, 10060, 10080, 10100, 10120, 10140, 10160, 10180]
+    val_ep = np.arange(0, 201, 10)
+    # return episode_id in episodes
+    return record or (episode_id in val_ep)
 
-    return episode_id in episodes
 
-
-def make_env(gym_id, seed, idx, capture_video, run_name, max_episode_steps):
+def make_env(gym_id, seed, idx, capture_video, run_name, max_episode_steps, env_params):
     def thunk():
-        env = gym.make(gym_id, render_mode='rgb_array')
-        env._max_episode_steps = max_episode_steps
+        if gym_id == "Shepherding-v0":
+            env = gym.make(gym_id, render_mode='rgb_array', parameters=env_params)
+            env._max_episode_steps = max_episode_steps
+            # env = DeterministicReset(env)
+            env = FlattenAction(env)
+            env = SingleAgentReward(env, k_4=0)
+            env = FlattenObservation(env)
+        else:
+            env = gym.make(gym_id, render_mode='rgb_array')
+            env._max_episode_steps = max_episode_steps
         env = gym.wrappers.RecordEpisodeStatistics(env)
         if capture_video and idx == 0:
             env = gym.wrappers.RecordVideo(env, f"videos/{run_name}", episode_trigger=record_trigger)
-        env = gym.wrappers.NormalizeReward(env)
+        # env = gym.wrappers.NormalizeReward(env)
         if gym_id == "Pendulum-v1":
             env = StableInit(env)
         env.action_space.seed(seed)
         env.observation_space.seed(seed)
+        env.reset(seed=seed)
         return env
     return thunk
 
@@ -71,6 +85,7 @@ class PPO:
     def __init__(self,
                  exp_name=os.path.basename(__file__).rstrip(".py"),
                  gym_id="CustomPendulum-v1",
+                 gym_params = None,
                  max_episode_steps=400,
                  learning_rate=1e-3,
                  seed=1,
@@ -98,6 +113,7 @@ class PPO:
                  target_kl=0.01, ):
         self.exp_name = exp_name
         self.gym_id = gym_id
+        self.gym_params = gym_params
         self.max_episode_steps = max_episode_steps
         self.num_episodes = num_episodes
         self.num_validation_episodes = num_validation_episodes
@@ -147,7 +163,8 @@ class PPO:
 
         # env setup
         self.envs = gym.vector.SyncVectorEnv(
-            [make_env(self.gym_id, self.seed + i, i, self.capture_video, self.run_name, self.max_episode_steps)
+            [make_env(self.gym_id, self.seed + i, i, self.capture_video,
+                      self.run_name, self.max_episode_steps, self.gym_params)
              for i in range(self.num_envs)]
         )
         assert isinstance(self.envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
@@ -185,8 +202,8 @@ class PPO:
         # RESULTS: variables to store results
         num_episodes = self.num_episodes
         cumulative_rewards = np.empty(num_episodes)
-        observations = np.empty((num_episodes, self.max_episode_steps, *self.envs.observation_space.shape))
-        control_actions = np.empty((num_episodes, self.max_episode_steps, *self.envs.action_space.shape))
+        observations = torch.zeros((num_episodes, self.max_episode_steps, *self.envs.observation_space.shape)).to(device)
+        control_actions = torch.zeros((num_episodes, self.max_episode_steps, *self.envs.action_space.shape)).to(device)
 
         # ALGO Logic: Storage setup
         obs = torch.zeros((self.num_steps, self.num_envs) + self.envs.single_observation_space.shape).to(device)
@@ -259,39 +276,43 @@ class PPO:
         if self.track:
             np.savez(f"runs/{self.run_name}/{self.run_name}_training.npz",
                      cumulative_rewards=cumulative_rewards,
-                     observations=observations,
-                     control_actions=control_actions,
+                     observations=observations.cpu().numpy(),
+                     control_actions=control_actions.cpu().numpy(),
                      )
             torch.save(self.agent.state_dict(), f'runs/{self.run_name}/{self.run_name}_agent.pt')
 
     def optimize(self, obs, log_probs, actions, advantages, returns, values, global_step, start_time):
+        device = self.device  # Ensuring all operations are on the correct device
         # Flatten the batch
-        b_obs = obs.reshape((-1,) + self.envs.single_observation_space.shape)
-        b_logprobs = log_probs.reshape(-1)
-        b_actions = actions.reshape((-1,) + self.envs.single_action_space.shape)
-        b_advantages = advantages.reshape(-1)
-        b_returns = returns.reshape(-1)
-        b_values = values.reshape(-1)
+        b_obs = obs.reshape((-1,) + self.envs.single_observation_space.shape).to(device)
+        b_logprobs = log_probs.reshape(-1).to(device)
+        b_actions = actions.reshape((-1,) + self.envs.single_action_space.shape).to(device)
+        b_advantages = advantages.reshape(-1).to(device)
+        b_returns = returns.reshape(-1).to(device)
+        b_values = values.reshape(-1).to(device)
 
         # Optimizing the policy and value network
-        b_inds = np.arange(self.batch_size)
+        b_inds = torch.arange(obs.size(0), device=device)
         clip_fracs = []
 
         for epoch in range(self.update_epochs):
-            np.random.shuffle(b_inds)
+            perm = torch.randperm(self.batch_size, device=device)
             for start in range(0, self.batch_size, self.minibatch_size):
                 end = start + self.minibatch_size
-                mb_inds = b_inds[start:end]
+                mb_inds = perm[start:end]
 
                 _, new_log_prob, entropy, new_value = self.agent.get_action_and_value(b_obs[mb_inds],
                                                                                       b_actions[mb_inds])
+                new_log_prob = new_log_prob.to(device)
+                entropy = entropy.to(device)
+                new_value = new_value.to(device)
                 log_ratio = new_log_prob - b_logprobs[mb_inds]
                 ratio = torch.exp(log_ratio)
 
                 with torch.no_grad():
                     # Calculate approx_kl
-                    old_approx_kl = (-log_ratio).mean()
-                    approx_kl = ((ratio - 1) - log_ratio).mean()
+                    old_approx_kl = (-log_ratio).mean().to(device)
+                    approx_kl = ((ratio - 1) - log_ratio).mean().to(device)
                     clip_fracs.append(((ratio - 1.0).abs() > self.clip_coef).float().mean().item())
 
                 mb_advantages = b_advantages[mb_inds]
@@ -299,11 +320,11 @@ class PPO:
                     mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
 
                 # Compute policy loss
-                pg_loss = _compute_policy_loss(mb_advantages, ratio, self.clip_coef)
+                pg_loss = _compute_policy_loss(mb_advantages, ratio, self.clip_coef).to(device)
 
                 # Compute value loss
                 v_loss = _compute_value_loss(new_value, self.clip_vloss, self.clip_coef, b_returns, b_values,
-                                             mb_inds)
+                                             mb_inds).to(device)
 
                 # Compute entropy loss
                 entropy_loss = entropy.mean()
@@ -320,10 +341,11 @@ class PPO:
             if self.target_kl is not None and approx_kl > self.target_kl:
                 break
 
-        # Calculate explained variance
-        y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
-        var_y = np.var(y_true)
-        explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+            # Calculate explained variance
+            var_y = torch.var(b_returns)
+            explained_var = torch.tensor(float('nan'), device=device) if var_y == 0 else 1 - torch.var(
+                b_returns - b_values) / var_y
+            explained_var = explained_var.item()
 
         # Record rewards for plotting purposes
         if self.track:

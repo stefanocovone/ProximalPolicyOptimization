@@ -14,6 +14,7 @@ class ActorCritic(nn.Module):
     def __init__(self, envs):
         super(ActorCritic, self).__init__()
 
+        self.device = None
         obs_shape = np.array(envs.single_observation_space.shape).prod()
         action_shape = np.prod(envs.single_action_space.shape)
 
@@ -26,10 +27,22 @@ class ActorCritic(nn.Module):
             nn.ReLU(),
             layer_init(nn.Linear(64, 64)),
             nn.ReLU(),
+            layer_init(nn.Linear(64, 64)),
+            nn.ReLU(),
+            layer_init(nn.Linear(64, 64)),
+            nn.ReLU(),
+            layer_init(nn.Linear(64, 64)),
+            nn.ReLU(),
             layer_init(nn.Linear(64, 1), std=1.0),
         )
         self.actor_mean = nn.Sequential(
             layer_init(nn.Linear(obs_shape, 64)),
+            nn.ReLU(),
+            layer_init(nn.Linear(64, 64)),
+            nn.ReLU(),
+            layer_init(nn.Linear(64, 64)),
+            nn.ReLU(),
+            layer_init(nn.Linear(64, 64)),
             nn.ReLU(),
             layer_init(nn.Linear(64, 64)),
             nn.ReLU(),
@@ -89,3 +102,10 @@ class ActorCritic(nn.Module):
         action_range = (self.action_max - self.action_min) / 2.0
         action_center = (self.action_max + self.action_min) / 2.0
         return action * action_range + action_center
+    
+    def to(self, device):
+        # Override the `to` method to also move action bounds to the specified device
+        self.device = device
+        self.action_min = self.action_min.to(device)
+        self.action_max = self.action_max.to(device)
+        return super(ActorCritic, self).to(device)
