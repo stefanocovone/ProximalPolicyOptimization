@@ -21,8 +21,8 @@ def record_trigger(episode_id: int) -> bool:
 
     episodes = [0, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 10050, 10100, 10120, 10180]
     record = (episode_id % 1000 == 0)
-    # val_ep = [10010, 10020, 10040, 10060, 10080, 10100, 10120, 10140, 10160, 10180]
-    val_ep = np.arange(0, 201, 10)
+    val_ep = [10010, 10020, 10040, 10060, 10080, 10100, 10120, 10140, 10160, 10180]
+    # val_ep = np.arange(0, 201, 10)
     # return episode_id in episodes
     return record or (episode_id in val_ep)
 
@@ -349,11 +349,11 @@ class PPO:
             if self.target_kl is not None and approx_kl > self.target_kl:
                 break
 
-            # Calculate explained variance
-            var_y = torch.var(b_returns)
-            explained_var = torch.tensor(float('nan'), device=device) if var_y == 0 else 1 - torch.var(
-                b_returns - b_values) / var_y
-            explained_var = explained_var.item()
+        # Calculate explained variance
+        var_y = torch.var(b_returns)
+        explained_var = torch.tensor(float(0), device=device) if var_y == 0 else 1 - torch.var(
+            b_returns - b_values) / var_y
+        explained_var = explained_var.item()
 
         # Record rewards for plotting purposes
         if self.track:
