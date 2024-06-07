@@ -22,7 +22,7 @@ def record_trigger(episode_id: int) -> bool:
     episodes = [0, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 10050, 10100, 10120, 10180]
     record = (episode_id % 1000 == 0)
     val_ep = [10010, 10020, 10040, 10060, 10080, 10100, 10120, 10140, 10160, 10180]
-    # val_ep = np.arange(0, 201, 10)
+    val_ep = np.arange(0, 201, 10)
     # return episode_id in episodes
     return record or (episode_id in val_ep)
 
@@ -85,7 +85,7 @@ class PPO:
     def __init__(self,
                  exp_name=os.path.basename(__file__).rstrip(".py"),
                  gym_id="CustomPendulum-v1",
-                 gym_params = None,
+                 gym_params=None,
                  max_episode_steps=400,
                  learning_rate=1e-3,
                  seed=1,
@@ -140,7 +140,7 @@ class PPO:
         self.torch_deterministic = torch_deterministic
         self.cuda = cuda
 
-        self.total_timesteps = self.num_episodes * self.max_episode_steps * self.num_envs
+        self.total_timesteps = self.num_episodes * self.max_episode_steps
         self.batch_size = int(self.num_envs * self.num_steps)
         self.minibatch_size = int(self.batch_size // self.num_minibatches)
 
@@ -162,7 +162,7 @@ class PPO:
         self.device = torch.device("cuda" if torch.cuda.is_available() and self.cuda else "cpu")
 
         # env setup
-        self.envs = gym.vector.SyncVectorEnv(
+        self.envs = gym.vector.AsyncVectorEnv(
             [make_env(self.gym_id, self.seed + i, i, self.capture_video,
                       self.run_name, self.max_episode_steps, self.gym_params)
              for i in range(self.num_envs)]
@@ -201,9 +201,10 @@ class PPO:
 
         # RESULTS: variables to store results
         num_episodes = self.num_episodes
-        cumulative_rewards = np.empty(num_episodes)
-        observations = torch.zeros((num_episodes, self.max_episode_steps, *self.envs.observation_space.shape)).to(device)
-        control_actions = torch.zeros((num_episodes, self.max_episode_steps, *self.envs.action_space.shape)).to(device)
+        # cumulative_rewards = np.empty(num_episodes)
+        # observations = torch.zeros((num_episodes, self.max_episode_steps, *self.envs.observation_space.shape)).to(device)
+        # control_actions = torch.zeros((num_episodes, self.max_episode_steps, *self.envs.action_space.shape)).to(device)
+
 
         # ALGO Logic: Storage setup
         obs = torch.zeros((self.num_steps, self.num_envs) + self.envs.single_observation_space.shape).to(device)
@@ -220,7 +221,12 @@ class PPO:
         next_obs, _ = self.envs.reset()
         next_obs = torch.Tensor(next_obs).to(device)
         next_done = torch.zeros(self.num_envs).to(device)
-        num_updates = int(np.ceil(self.total_timesteps // self.batch_size))
+        num_updates = int(np.ceil(self.total_timesteps // self.batch_size))+2
+
+        observations = torch.zeros((self.num_steps * num_updates,
+                                    self.num_envs) + self.envs.single_observation_space.shape).to(device)
+        cumulative_rewards = torch.zeros((self.num_steps * num_updates,
+                                         self.num_envs)).to(device)
 
         update = 0
         episode_step = 0
@@ -247,9 +253,6 @@ class PPO:
                 actions[step] = action
                 log_probs[step] = logprob
 
-                observations[episode][episode_step] = next_obs
-                control_actions[episode][episode_step] = action
-
                 # TRY NOT TO MODIFY: execute the game and log data.
                 next_obs, reward, terminated, truncated, info = self.envs.step(action.cpu().numpy())
                 episode_step += 1
@@ -258,36 +261,56 @@ class PPO:
                 next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(done).to(device)
 
                 if "final_info" in info.keys():
-                    episode += 1
+                    episode += self.num_envs
                     episode_step = 0
-                    episodic_return = np.array([x['episode']['r'] for x in info['final_info']])[0]
-                    episodic_length = np.array([x['episode']['l'] for x in info['final_info']])[0]
-                    cumulative_rewards[episode - 1] = episodic_return
-                    print(f"episode={episode}, episodic_return={episodic_return}")
+                    episodic_return = np.array([x['episode']['r'] for x in info['final_info']])
+                    # cumulative_rewards[episode - 1] = episodic_return
+                    episode_labels = np.array([f"episode={episode - 7 + i}, reward = " for i in range(len(episodic_return))])
+                    print_strings = [label + str(value) for label, value in zip(episode_labels, episodic_return)]
+                    print("\n".join(print_strings))
+                    # print(f"episode={episode}, episodic_return={episodic_return}")
                     if self.track:
-                        self.writer.add_scalar("charts/episodic_return", episodic_return, global_step)
-                        self.writer.add_scalar("charts/episodic_length", episodic_length, global_step)
-                    if episode == num_episodes:
+                        pass
+                        # self.writer.add_scalar("charts/episodic_return", episodic_return, global_step)
+                    if episode >= num_episodes:
                         break
+
+            observations[(update-1)*self.num_steps:(update-1)*self.num_steps + self.num_steps] = obs
+            cumulative_rewards[(update - 1) * self.num_steps:(update - 1) * self.num_steps + self.num_steps] = rewards
 
             advantages, returns = self._compute_advantage(next_obs, rewards, next_done, dones, values)
             self.optimize(obs, log_probs, actions, advantages, returns, values, global_step, start_time)
 
             if self.track and (episode+1) % 1000 == 0:
-                np.savez(f"runs/{self.run_name}/{self.run_name}_training.npz",
-                         cumulative_rewards=cumulative_rewards,
-                         observations=observations.cpu().numpy(),
-                         control_actions=control_actions.cpu().numpy(),
-                         )
+                # np.savez(f"runs/{self.run_name}/{self.run_name}_training.npz",
+                #         cumulative_rewards=cumulative_rewards,
+                #         observations=observations.cpu().numpy(),
+                #         control_actions=control_actions.cpu().numpy(),
+                #         )
                 torch.save(self.agent.state_dict(), f'runs/{self.run_name}/{self.run_name}_agent.pt')
 
         if self.track:
+            observations = self.reshape_tensor(observations)[:self.num_episodes, :, :]
+            cumulative_rewards = self.reshape_tensor(
+                cumulative_rewards.unsqueeze(dim=-1)).squeeze().sum(dim=1)[:self.num_episodes]
             np.savez(f"runs/{self.run_name}/{self.run_name}_training.npz",
-                     cumulative_rewards=cumulative_rewards,
+                     cumulative_rewards=cumulative_rewards.cpu().numpy(),
                      observations=observations.cpu().numpy(),
-                     control_actions=control_actions.cpu().numpy(),
                      )
             torch.save(self.agent.state_dict(), f'runs/{self.run_name}/{self.run_name}_agent.pt')
+
+    def reshape_tensor(self, tensor):
+        slices = tensor.split(self.max_episode_steps, dim=0)
+
+        # List to store the reshaped slices
+        reshaped_slices = []
+        for s in slices:
+            reshaped_s = s.permute(1, 0, 2)
+            reshaped_slices.append(reshaped_s)
+
+        # Combine the reshaped slices back into a single tensor
+        result = torch.cat(reshaped_slices[:-1], dim=0)
+        return result
 
     def optimize(self, obs, log_probs, actions, advantages, returns, values, global_step, start_time):
         device = self.device  # Ensuring all operations are on the correct device
@@ -367,64 +390,77 @@ class PPO:
             self.writer.add_scalar("losses/explained_variance", explained_var, global_step)
             self.writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
 
-    def validate(self, deterministic=False):
+    def validate(self):
         self.agent.eval()
         print(f"VALIDATION {self.run_name}")
         device = self.device
+
+        env = make_env(self.gym_id, self.seed, 0, self.capture_video,
+                       self.run_name, self.max_episode_steps, self.gym_params)
+        env = env()
 
         self.agent.load_state_dict(torch.load(f'runs/{self.run_name}/{self.run_name}_agent.pt'))
 
         # RESULTS: variables to store results
         num_episodes = self.num_validation_episodes
-        cumulative_rewards = np.empty(num_episodes)
-        observations = torch.zeros((num_episodes, self.max_episode_steps, *self.envs.observation_space.shape)).to(device)
-        control_actions = torch.zeros((num_episodes, self.max_episode_steps, *self.envs.action_space.shape)).to(device)
-        control_actions_std = torch.zeros((num_episodes, self.max_episode_steps, *self.envs.action_space.shape)).to(device)
-        control_actions_mean = torch.zeros((num_episodes, self.max_episode_steps, *self.envs.action_space.shape)).to(device)
+
+        observations = torch.zeros((int(np.ceil((num_episodes+8) * self.max_episode_steps / self.num_envs)),
+                                    self.num_envs) + self.envs.single_observation_space.shape).to(device)
+        cumulative_rewards = torch.zeros((int(np.ceil((num_episodes+8) * self.max_episode_steps / self.num_envs)),
+                                          self.num_envs)).to(device)
+        control_actions = torch.zeros((int(np.ceil((num_episodes+8) * self.max_episode_steps / self.num_envs)),
+                                      self.num_envs) + self.envs.single_action_space.shape).to(device)
 
         next_obs, _ = self.envs.reset()
         next_obs = torch.Tensor(next_obs).to(device)
 
-        for episode in range(num_episodes):
-            episode_step = 0
+        step = 0
+        episode = 0
+        episode_step = 0
+        while episode < num_episodes:
 
-            while episode_step < self.max_episode_steps:
-                with torch.no_grad():
-                    action, action_mean, action_std = self.agent.get_action(next_obs, deterministic)
+            with torch.no_grad():
+                action = self.agent.get_action_mean(next_obs)
 
-                observations[episode][episode_step] = next_obs
-                control_actions[episode][episode_step] = action
-                control_actions_std[episode][episode_step] = action_std
-                control_actions_mean[episode][episode_step] = action_mean
+            # observations[episode][episode_step] = next_obs
+            # control_actions[episode][episode_step] = action
 
-                # TRY NOT TO MODIFY: execute the game and log data.
-                next_obs, reward, terminated, truncated, info = self.envs.step(action.cpu().numpy())
-                episode_step += 1
-                done = np.logical_or(terminated, truncated)
-                next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(done).to(device)
+            observations[step] = next_obs
+            control_actions[step] = action
 
-                if "final_info" in info.keys():
-                    episodic_return = np.array([x['episode']['r'] for x in info['final_info']])[0]
-                    episodic_length = np.array([x['episode']['l'] for x in info['final_info']])[0]
-                    cumulative_rewards[episode - 1] = episodic_return
-                    print(f"episode={episode}, episodic_return={episodic_return}")
-                    if self.track:
-                        self.writer.add_scalar("charts/validation_episodic_return",
-                                               episodic_return, episode * int(episodic_length[0]))
-                    if episode == num_episodes:
-                        break
+            # TRY NOT TO MODIFY: execute the game and log data.
+            next_obs, reward, terminated, truncated, info = self.envs.step(action.cpu().numpy())
+            cumulative_rewards[step] = torch.Tensor(reward).squeeze().to(device)
+            episode_step += 1
+            step += 1
+            done = np.logical_or(terminated, truncated)
+            next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(done).to(device)
+
+            if "final_info" in info.keys():
+                episode += self.num_envs
+                episode_step = 0
+                episodic_return = np.array([x['episode']['r'] for x in info['final_info']])
+                # cumulative_rewards[episode - 1] = episodic_return
+                episode_labels = np.array(
+                    [f"episode={episode - 7 + i}, reward = " for i in range(len(episodic_return))])
+                print_strings = [label + str(value) for label, value in zip(episode_labels, episodic_return)]
+                print("\n".join(print_strings))
+                # print(f"episode={episode}, episodic_return={episodic_return}")
+                if self.track:
+                    pass
+                    # self.writer.add_scalar("charts/episodic_return", episodic_return, global_step)
 
         if self.track:
-            if deterministic:
-                save_path = f"runs/{self.run_name}/{self.run_name}_validation_det.npz"
-            else:
-                save_path = f"runs/{self.run_name}/{self.run_name}_validation.npz"
+            observations = self.reshape_tensor(observations)[:num_episodes, :, :]
+            control_actions = self.reshape_tensor(control_actions)[:num_episodes, :, :]
+            cumulative_rewards = self.reshape_tensor(
+                cumulative_rewards.unsqueeze(dim=-1)).squeeze().sum(dim=1)[:num_episodes]
+
+            save_path = f"runs/{self.run_name}/{self.run_name}_validation.npz"
             np.savez(save_path,
-                     cumulative_rewards=cumulative_rewards,
+                     cumulative_rewards=cumulative_rewards.cpu().numpy(),
                      observations=observations.cpu().numpy(),
                      control_actions=control_actions.cpu().numpy(),
-                     control_actions_std=control_actions_std.cpu().numpy(),
-                     control_actions_mean=control_actions_mean.cpu().numpy(),
                      )
 
     def close(self):

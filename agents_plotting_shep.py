@@ -165,8 +165,8 @@ class AgentResults:
             observations_v = cart_to_polar(validation_results["observations"].squeeze())
             self.observations_v.append(observations_v)
             self.actions.append(validation_results["control_actions"].squeeze())
-            self.actions_mean.append(validation_results["control_actions_mean"].squeeze())
-            self.actions_std.append(validation_results["control_actions_std"].squeeze())
+            # self.actions_mean.append(validation_results["control_actions_mean"].squeeze())
+            # self.actions_std.append(validation_results["control_actions_std"].squeeze())
 
             settling_times_v = compute_settling_time(observations_v)
             self.settling_times.extend(settling_times_v)

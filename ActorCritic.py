@@ -81,22 +81,27 @@ class ActorCritic(nn.Module):
         return action, log_prob, entropy, value
 
     def get_action(self, x, deterministic=False):
-        # Compute action mean and log standard deviation
-        action_mean = self.actor_mean(x)
-        action_mean = self.scale_action(action_mean)  # Scale to action range
-        action_log_std = self.actor_log_std.expand_as(action_mean)
-        action_std = torch.exp(action_log_std)
+        with torch.no_grad():
+            # Compute action mean and log standard deviation
+            action_mean = self.actor_mean(x)
+            action_mean = self.scale_action(action_mean)  # Scale to action range
+            action_log_std = self.actor_log_std.expand_as(action_mean)
+            action_std = torch.exp(action_log_std)
 
-        # Create the normal distribution
-        probs = Normal(action_mean, action_std)
+            # Create the normal distribution
+            probs = Normal(action_mean, action_std)
 
-        # Sample action, otherwise use the deterministic option if specified
-        if deterministic:
-            action = action_mean
-        else:
-            action = probs.sample()
+            # Sample action, otherwise use the deterministic option if specified
+            if deterministic:
+                action = action_mean
+            else:
+                action = probs.sample()
 
         return action, action_mean, action_std
+
+    def get_action_mean(self, x):
+        with torch.no_grad():
+            return self.scale_action(self.actor_mean(x))
 
     def scale_action(self, action):
         action_range = (self.action_max - self.action_min) / 2.0
