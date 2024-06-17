@@ -7,30 +7,30 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 FIGURES_FOLDER = './Figures/'
 
 
-def cart_to_polar(data):
-    # Ensure the input is an ndarray
-    data = np.array(data)*60
+def cart_to_polar(observations):
+    # Rescale all the quantities to +-region_length
+    observations = np.array(observations) * 60
 
     # Check if the shape is (100, 1200, 4)
-    if data.shape[-1] != 4:
-        raise ValueError("The last dimension of the input data must be of size 4")
+    if observations.shape[-1] != 4:
+        raise ValueError("The last dimension of the input observations must be of size 4")
 
     # Extract the herder-target vector components and the target position components
-    delta_x = data[..., 0]
-    delta_y = data[..., 1]
-    target_x = data[..., 2]
-    target_y = data[..., 3]
+    delta_x = observations[..., 0]
+    delta_y = observations[..., 1]
+    target_x = observations[..., 2]
+    target_y = observations[..., 3]
 
     # Reconstruct the herder position
     herder_x = target_x - delta_x
     herder_y = target_y - delta_y
 
     # Compute polar coordinates for the herder position
-    radius_herder = np.sqrt(herder_x**2 + herder_y**2)
+    radius_herder = np.sqrt(herder_x ** 2 + herder_y ** 2)
     angle_herder = np.arctan2(herder_y, herder_x)
 
     # Compute polar coordinates for the target position
-    radius_target = np.sqrt(target_x**2 + target_y**2)
+    radius_target = np.sqrt(target_x ** 2 + target_y ** 2)
     angle_target = np.arctan2(target_y, target_x)
 
     # Combine the polar coordinates into the desired output format
@@ -39,7 +39,7 @@ def cart_to_polar(data):
     return polar_coords
 
 
-def compute_settling_time(obs):
+def compute_settling_time_legacy(obs):
     eta = 5
 
     # Compute the norm of each state in the obs array
@@ -50,12 +50,50 @@ def compute_settling_time(obs):
 
     # Reverse the boolean mask along the steps axis
     reversed_mask = np.flip(inside_goal_mask, axis=1).astype(int)
-
     # Find the index of the first occurrence of True in the reversed mask
     settling_indices = 1200 - np.argmin(reversed_mask, axis=1)
 
     # Convert indices to settling times
     settling_times = settling_indices
+
+    return settling_times
+
+
+def compute_settling_time(positions, threshold=5):
+    """
+    Compute the settling time for each episode.
+    The settling time is defined as the minimum timestep t_s in which target_radius[t_s] is inside
+    the goal region and the average radius between t_s and t_f is still inside the goal region.
+
+    Parameters:
+    positions (numpy.ndarray): A 3D array of shape (num_episodes, episode_steps, states) representing positions.
+    threshold (float): The threshold below which the average position must be.
+
+    Returns:
+    numpy.ndarray: A 1D array of settling times for each episode.
+    """
+
+    positions = positions[..., 2]
+    num_episodes, episode_steps = positions.shape
+
+    # Calculate the cumulative sum from the end to the start
+    cumulative_sum = np.cumsum(positions[:, ::-1], axis=1)[:, ::-1]
+
+    # Calculate the number of elements from each step to the end
+    step_counts = np.arange(episode_steps, 0, -1)
+
+    # Calculate the running average from each step to the end
+    running_avg = cumulative_sum / step_counts
+
+    # Check both conditions: position at t_s and running average from t_s to the end
+    condition_met = (positions < threshold) & (running_avg < threshold)
+
+    # Find the first index where both conditions are met
+    settling_times = np.argmax(condition_met, axis=1)
+
+    # Handle episodes where the condition is never met
+    not_found_mask = np.all(~condition_met, axis=1)
+    settling_times[not_found_mask] = episode_steps
 
     return settling_times
 
@@ -66,7 +104,7 @@ def compute_successful_episode(settling_times, threshold):
     return successful_episode
 
 
-def terminal_episode(vector, n=10):
+def terminal_episode(vector, n=100):
     # Find the indices of the first occurrence of n consecutive True values
     succession_indices = np.where(np.convolve(vector, np.ones(n), mode='valid') == n)[0]
 
@@ -77,46 +115,11 @@ def terminal_episode(vector, n=10):
         return 10000
 
 
-def compute_ss_error(obs, settling_times):
-    # Get the number of steps per episode
-    num_steps_per_episode = obs.shape[1]
-
-    # Create an index array for steps
-    steps_idx = np.arange(num_steps_per_episode)
-
-    # Create a mask for steps after settling time
-    settling_mask = steps_idx >= settling_times[:, np.newaxis]
-
-    # Compute the cumulative norms for each episode
-    cumulative_norms = obs[..., 2]
-
-    # Apply the mask to cumulative norms to get norms after settling time
-    norms_after_settling = cumulative_norms * settling_mask
-
-    # Sum the norms after settling time for each episode
-    ss_error = np.sum(norms_after_settling, axis=1)
-
-    # Set steady-state error to NaN where settling time is 0
-    ss_error[settling_times == 0] = np.nan
-
-    # Adjust ss_error for the number of steps after settling time
-    x_max = 30*np.sqrt(2)
-    ss_error /= (num_steps_per_episode - settling_times + 1) * x_max
-
-    return ss_error
-
-
 Data = namedtuple('Data', ['mean', 'std'])
 
 
 class AgentResults:
     def __init__(self, agent_id, env_id, sessions=1):
-        self.observations_v_det = None
-        self.actions_std_det = None
-        self.actions_mean_det = None
-        self.actions_det = None
-        self.ss_errors_det = None
-        self.settling_times_det = None
         self.file_prefix = f"{env_id}__{agent_id}"
         self.agent_id = agent_id
         self.env_id = env_id
@@ -124,80 +127,50 @@ class AgentResults:
         self.rewards = None
         self.terminal_episodes = None
         self.settling_times = None
-        self.ss_errors = None
         self.observations_t = None
         self.observations_v = None
         self.actions = None
-        self.actions_mean = None
-        self.actions_std = None
+        self.successful_episodes = None
 
     def load_training(self):
         self.rewards = []
         self.terminal_episodes = []
+        self.observations_t = []
         for i in range(self.sessions):
             filename = f"{self.file_prefix}_{i + 1}_training.npz"
             file_path = os.path.join(f"./runs/{self.file_prefix}_{i + 1}", filename)
             training_results = np.load(file_path)
 
             self.rewards.append(training_results["cumulative_rewards"])
-            self.observations_t = cart_to_polar(training_results["observations"].squeeze())
+            self.observations_t.append(cart_to_polar(training_results["observations"].squeeze()))
 
             # compute terminal episodes
-            settling_times_t = compute_settling_time(self.observations_t)
-            successful_episode_t = compute_successful_episode(settling_times_t, 1150)
+            settling_times_t = compute_settling_time(self.observations_t[i])
+            successful_episode_t = compute_successful_episode(settling_times_t, 1000)
             terminal_episode_t = terminal_episode(successful_episode_t)
             self.terminal_episodes.append(terminal_episode_t)
 
     def load_validation(self):
         self.settling_times = []
-        self.ss_errors = []
         self.actions = []
-        self.actions_mean = []
-        self.actions_std = []
         self.observations_v = []
+        self.successful_episodes = []
 
         for i in range(self.sessions):
             filename = f"{self.file_prefix}_{i + 1}_validation.npz"
             file_path = os.path.join(f"./runs/{self.file_prefix}_{i + 1}", filename)
             validation_results = np.load(file_path)
 
-            obs = validation_results["observations"].squeeze()
             observations_v = cart_to_polar(validation_results["observations"].squeeze())
             self.observations_v.append(observations_v)
             self.actions.append(validation_results["control_actions"].squeeze())
-            # self.actions_mean.append(validation_results["control_actions_mean"].squeeze())
-            # self.actions_std.append(validation_results["control_actions_std"].squeeze())
 
             settling_times_v = compute_settling_time(observations_v)
-            self.settling_times.extend(settling_times_v)
-            self.ss_errors.extend(compute_ss_error(observations_v, settling_times_v))
+            self.settling_times.append(settling_times_v)
+
+            self.successful_episodes.append(compute_successful_episode(settling_times_v, 1000))
 
         self.actions = np.clip(self.actions, -8, 8)
-
-    def load_validation_det(self):
-        self.settling_times_det = []
-        self.ss_errors_det = []
-        self.actions_det = []
-        self.actions_mean_det = []
-        self.actions_std_det = []
-        self.observations_v_det = []
-
-        for i in range(self.sessions):
-            filename = f"{self.file_prefix}_{i + 1}_validation_det.npz"
-            file_path = os.path.join(f"./runs/{self.file_prefix}_{i + 1}", filename)
-            validation_results = np.load(file_path)
-
-            observations_v_det = cart_to_polar(validation_results["observations"].squeeze())
-            self.observations_v_det.append(observations_v_det)
-            self.actions_det.append(validation_results["control_actions"].squeeze())
-            self.actions_mean_det.append(validation_results["control_actions_mean"].squeeze())
-            self.actions_std_det.append(validation_results["control_actions_std"].squeeze())
-
-            settling_times_v = compute_settling_time(observations_v_det)
-            self.settling_times_det.extend(settling_times_v)
-            self.ss_errors_det.extend(compute_ss_error(observations_v_det, settling_times_v))
-
-        self.actions_det = np.clip(self.actions_det, -8, 8)
 
     def average_reward(self):
         avg_rewards = []
@@ -220,25 +193,25 @@ class AgentResults:
         std = np.std(self.terminal_episodes)
         return Data(mean, std)
 
-    def settling_time(self, deterministic=False):
-        settling_times = self.settling_times_det if deterministic else self.settling_times
+    def settling_time(self):
+        settling_times = []
+        for settling_time in self.settling_times:
+            settling_times.extend(settling_time)
         mean = np.mean(settling_times)
         std = np.std(settling_times)
         return Data(mean, std)
 
-    def ss_error(self, deterministic=False):
-        ss_errors = self.ss_errors_det if deterministic else self.ss_errors
-        mean = np.mean(ss_errors)
-        std = np.std(ss_errors)
+    def success_rate(self):
+        success_rates = []
+        for success in self.successful_episodes:
+            success_rate = np.mean(success)*100
+            success_rates.append(success_rate)
+        mean = np.mean(success_rates)
+        std = np.std(success_rates)
         return Data(mean, std)
 
-    def action_std(self):
-        mean = np.mean(self.actions_std)
-        std = np.std(self.actions_std)
-        return Data(mean, std)
-
-    def control_effort(self, deterministic=False):
-        actions = self.actions_det if deterministic else self.actions
+    def control_effort(self):
+        actions = self.actions
         control_norm = []
         for control_actions in actions:
             actions_norm = np.linalg.norm(control_actions, axis=-1)
@@ -258,8 +231,7 @@ def moving_average(data, window_size):
     return moving_avg
 
 
-def plot_rewards(*agents, labels=None, filename=None, moving_avg_size=5, training_length=200, detail_window=False,
-                 start_detail=8000, sigma=200000):
+def plot_rewards(*agents, labels=None, filename=None, moving_avg_size=100, training_length=10000):
     fig, ax = plt.subplots(figsize=(10, 5))
     for idx, agent in enumerate(agents):
         label = labels[idx] if labels else agent.file_prefix
@@ -280,40 +252,6 @@ def plot_rewards(*agents, labels=None, filename=None, moving_avg_size=5, trainin
 
     ax.set_xlim(0, training_length)
 
-    if detail_window:
-        # Add red horizontal line at value 1e8
-        ax.axhline(y=sigma, color='red', linestyle='--', label='$\sigma$')
-    ax.legend()
-    if detail_window:
-        # Calculate the position of the detail window based on the zoomed region
-        detail_width = 2.2  # Adjust the width of the detail window as needed
-        detail_height = 1.4  # Adjust the height of the detail window as needed
-        axin = inset_axes(ax, width=detail_width, height=detail_height, loc='lower right')
-
-        for idx, agent in enumerate(agents):
-            label = labels[idx] if labels else agent.file_prefix
-            # smoothing signals for detail window
-            terminal_rewards = [rewards[start_detail:] for rewards in agent.rewards]
-            smoothed_rewards_detail = moving_average(terminal_rewards, moving_avg_size)
-            # compute mean and standard deviation for detail window
-            mean_rewards_detail = np.mean(smoothed_rewards_detail, axis=0)
-            std_rewards_detail = np.std(smoothed_rewards_detail, axis=0)
-
-            axin.plot(range(start_detail, start_detail + len(mean_rewards_detail)), mean_rewards_detail,
-                      label=label)  # Set x ticks explicitly
-            axin.fill_between(range(len(mean_rewards_detail)), mean_rewards_detail - std_rewards_detail,
-                              mean_rewards_detail + std_rewards_detail, alpha=0.2)
-
-        axin.set_xlim(start_detail, training_length)  # Set x-axis limits for detail view
-        axin.set_ylim(min(mean_rewards_detail), max(mean_rewards_detail))  # Adjust y-axis limits if needed
-        axin.set_ylim(0, 3 * sigma)
-        axin.grid(True)
-        axin.xaxis.tick_top()  # Move x-axis ticks to the top
-
-        # Add red horizontal line at value 1e8 to detail plot
-        axin.axhline(y=sigma, color='red', linestyle='--', label='$\sigma$')
-        axin.legend()
-
     if filename:
         plt.savefig(os.path.join(FIGURES_FOLDER, filename), format='png')
     else:
@@ -323,14 +261,14 @@ def plot_rewards(*agents, labels=None, filename=None, moving_avg_size=5, trainin
 
 
 def plot_training_metrics(*agents, labels=None, filename=None):
-    # Define the data
+    # Define the observations
     metrics = ['$J_{avg}^\pi$', '$J_{avg,t}^\pi$', 'Episode']
     stats = [[agent.average_reward(), agent.average_term_reward(), agent.terminal_episode()] for agent in agents]
 
     means = [[stat.mean for stat in stat_list] for stat_list in stats]
     stds = [[stat.std for stat in stat_list] for stat_list in stats]
 
-    # Print and store data in results.txt
+    # Print and store observations in results.txt
     with open("results.txt", "w") as file:
         for j, agent in enumerate(agents):
             agent_prefix = agent.file_prefix
@@ -362,17 +300,11 @@ def plot_training_metrics(*agents, labels=None, filename=None):
 
 
 def plot_validation_metrics(*agents, labels=None, filename=None):
-    # Define the data
-    metrics = ['Timestep', '$e_g$', 'velocity']
-    # stats = [[agent.settling_time(deterministic=deterministic),
-    #           agent.ss_error(deterministic=deterministic),
-    #           agent.control_effort(deterministic=deterministic)] for agent in agents]
-
-    agent = agents[0]
-    stats = [[agent.settling_time(), agent.ss_error(), agent.control_effort()],
-             [agent.settling_time(deterministic=True),
-              agent.ss_error(deterministic=True),
-              agent.control_effort(deterministic=True)]]
+    # Define the observations
+    metrics = ['Timestep', '%', 'velocity']
+    stats = [[agent.settling_time(),
+              agent.success_rate(),
+              agent.control_effort()] for agent in agents]
 
     means = [[stat.mean for stat in stat_list] for stat_list in stats]
     stds = [[stat.std for stat in stat_list] for stat_list in stats]
@@ -381,7 +313,7 @@ def plot_validation_metrics(*agents, labels=None, filename=None):
     fig, axs = plt.subplots(1, 3, figsize=(10, 3))
 
     for i, metric in enumerate(metrics):
-        for j in range(2):
+        for j, agent in enumerate(agents):
             agent_label = labels[j] if labels else "agent_name"
             axs[i].errorbar([agent_label], [means[j][i]], yerr=[stds[j][i]], fmt='o', capsize=5, label=metric)
             print(f"Mean {metric}: {means[j][i]}, Std {metric}: {stds[j][i]}")  # Print mean and std
@@ -389,8 +321,10 @@ def plot_validation_metrics(*agents, labels=None, filename=None):
         axs[i].set_ylabel(metric)
 
     axs[0].set_title('Settling Time')
-    axs[1].set_title('Steady State Error')
+    axs[1].set_title('Success Rate')
     axs[2].set_title('Control Effort')
+
+    axs[1].set_ylim(0, 110)
 
     plt.tight_layout()
     if filename:
@@ -400,55 +334,10 @@ def plot_validation_metrics(*agents, labels=None, filename=None):
     plt.show()
 
 
-def plot_actions(agent, labels=None, filename=None, episode_length=400, session=1):
-    # the function selects the first validation episode of the first realization of the agent
-    label = labels if labels else agent.file_prefix
-
-    actions_mean = agent.actions_mean[session - 1][0, :]
-    actions_std = agent.actions_std[session - 1][0, :]
-
-    actions_std_dev = agent.action_std()
-
-    # Create a GridSpec layout
-    fig = plt.figure(figsize=(10, 5))
-    gs = fig.add_gridspec(1, 2, width_ratios=[7, 3])  # 70% and 30% width
-
-    # Create the first subplot (70% width)
-    ax0 = fig.add_subplot(gs[0])
-    ax0.plot(actions_mean, label=label)
-    ax0.fill_between(range(len(actions_mean)), actions_mean - actions_std,
-                     actions_mean + actions_std, alpha=0.2)
-    ax0.set_xlabel('Timesteps')
-    ax0.set_ylabel(r'$torque [Nm]$')
-    ax0.set_title('Control action')
-    ax0.grid(True)
-    ax0.set_xlim(0, episode_length)
-
-    # Create the second subplot (30% width)
-    ax1 = fig.add_subplot(gs[1])
-    ax1.errorbar(label, actions_std_dev.mean,
-                 yerr=actions_std_dev.std, fmt='o', capsize=5, label="Std Deviations")
-    ax1.grid(True)
-    ax1.set_ylabel(r'$torque [Nm]$')
-    ax1.set_title('Standard Deviations')
-
-    # Adjust layout to prevent overlap
-    plt.tight_layout()
-
-    # Save the figure
-    if filename:
-        plt.savefig(os.path.join(FIGURES_FOLDER, filename), format='png')
-    else:
-        plt.savefig(os.path.join(FIGURES_FOLDER, 'actions.png'), format='png')
-
-    # Show the figure
-    plt.show()
-
-
-def plot_agent_data(agent, labels=None, filename=None, episode_length=400, session=1, deterministic=True):
-    # Extract data for plotting
-    data = agent.observations_v[0] if deterministic else agent.observations_v_det[0]
-    ep = 2
+def plot_agent_data(agent, filename=None):
+    # Extract observations for plotting
+    data = agent.observations_v[0]
+    ep = 1
     herder_radius = data[ep, 1:, 0]
     herder_angle = data[ep, 1:, 1]
     target_radius = data[ep, 1:, 2]
@@ -486,11 +375,12 @@ def plot_agent_data(agent, labels=None, filename=None, episode_length=400, sessi
 
     # Plot relative distance on the second subplot
     axs[1].plot(relative_distance, label='Relative Distance')
+    axs[1].axhline(y=2.5, color='r', linestyle='--', label='Repulsion radius')
     axs[1].set_title('Relative Distance Between Herder and Target')
     axs[1].set_xlabel('Time Step')
     axs[1].set_ylabel('Distance')
     axs[1].set_xlim(0, 1200)
-    axs[1].set_ylim(0, 3)
+    # axs[1].set_ylim(0, 3)
     axs[1].legend()
     axs[1].grid(True)
 

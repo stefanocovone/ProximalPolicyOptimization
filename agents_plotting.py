@@ -294,14 +294,14 @@ def plot_rewards(*agents, labels=None, filename=None, moving_avg_size=5, trainin
 
 
 def plot_training_metrics(*agents, labels=None, filename=None):
-    # Define the data
+    # Define the observations
     metrics = ['$J_{avg}^\pi$', '$J_{avg,t}^\pi$', 'Episode']
     stats = [[agent.average_reward(), agent.average_term_reward(), agent.terminal_episode()] for agent in agents]
 
     means = [[stat.mean for stat in stat_list] for stat_list in stats]
     stds = [[stat.std for stat in stat_list] for stat_list in stats]
 
-    # Print and store data in results.txt
+    # Print and store observations in results.txt
     with open("results.txt", "w") as file:
         for j, agent in enumerate(agents):
             agent_prefix = agent.file_prefix
@@ -333,7 +333,7 @@ def plot_training_metrics(*agents, labels=None, filename=None):
 
 
 def plot_validation_metrics(*agents, labels=None, filename=None):
-    # Define the data
+    # Define the observations
     metrics = ['Episode', '$e_g$', '$torque$']
     # stats = [[agent.settling_time(deterministic=deterministic),
     #           agent.ss_error(deterministic=deterministic),
@@ -417,7 +417,7 @@ def plot_actions(agent, labels=None, filename=None, episode_length=400, session=
 
 
 def plot_agent_data(agent, labels=None, filename=None, episode_length=400, session=1, deterministic=True):
-    # Extract data for plotting
+    # Extract observations for plotting
     if deterministic:
         control_action = agent.actions_det[session - 1][0, :]
         angular_position = agent.observations_v_det[session - 1][0, :, 0]

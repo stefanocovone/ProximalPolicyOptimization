@@ -11,19 +11,18 @@ import torch.optim as optim
 from gymnasium.wrappers import FlattenObservation
 from torch.utils.tensorboard import SummaryWriter
 
-from ActorCritic import ActorCritic
+from ActorCriticDiscrete import ActorCritic
 
-from customPendulum import StableInit
-from shepherding.wrappers import DeterministicReset, SingleAgentReward, FlattenAction
+from shepherding.wrappers import LowLevelPPOPolicy
 
 
 def record_trigger(episode_id: int) -> bool:
 
     episodes = [0, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 10050, 10100, 10120, 10180]
-    record = (episode_id % 1000 == 0)
+    record = ((episode_id + 1000) % 1000 == 0)
     val_ep = [10010, 10020, 10040, 10060, 10080, 10100, 10120, 10140, 10160, 10180]
-    val_ep = np.arange(0, 201, 10)
-    val_ep = np.arange(0, 10)
+    # val_ep = np.arange(0, 201, 10)
+    # val_ep = np.arange(0, 10)
     # return episode_id in episodes
     return record or (episode_id in val_ep)
 
@@ -31,11 +30,9 @@ def record_trigger(episode_id: int) -> bool:
 def make_env(gym_id, seed, idx, capture_video, run_name, max_episode_steps, env_params):
     def thunk():
         if gym_id == "Shepherding-v0":
-            env = gym.make(gym_id, render_mode='rgb_array', parameters=env_params)
+            env = gym.make(gym_id, render_mode='human', parameters=env_params)
             env._max_episode_steps = max_episode_steps
-            # env = DeterministicReset(env)
-            env = FlattenAction(env)
-            env = SingleAgentReward(env, k_4=3)
+            env = LowLevelPPOPolicy(env, 1)
             env = FlattenObservation(env)
         else:
             env = gym.make(gym_id, render_mode='rgb_array')
@@ -44,8 +41,7 @@ def make_env(gym_id, seed, idx, capture_video, run_name, max_episode_steps, env_
         if capture_video and idx == 0:
             env = gym.wrappers.RecordVideo(env, f"videos/{run_name}", episode_trigger=record_trigger)
         # env = gym.wrappers.NormalizeReward(env)
-        if gym_id == "Pendulum-v1":
-            env = StableInit(env)
+
         env.action_space.seed(seed)
         env.observation_space.seed(seed)
         env.reset(seed=seed)
@@ -168,7 +164,7 @@ class PPO:
                       self.run_name, self.max_episode_steps, self.gym_params)
              for i in range(self.num_envs)]
         )
-        assert isinstance(self.envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
+        assert isinstance(self.envs.single_action_space, gym.spaces.MultiDiscrete), "only discrete action space is supported"
 
         self.agent = ActorCritic(self.envs).to(self.device)
         self.optimizer = optim.Adam(self.agent.parameters(), lr=self.learning_rate, eps=1e-5)
@@ -202,10 +198,6 @@ class PPO:
 
         # RESULTS: variables to store results
         num_episodes = self.num_episodes
-        # cumulative_rewards = np.empty(num_episodes)
-        # observations = torch.zeros((num_episodes, self.max_episode_steps, *self.envs.observation_space.shape)).to(device)
-        # control_actions = torch.zeros((num_episodes, self.max_episode_steps, *self.envs.action_space.shape)).to(device)
-
 
         # ALGO Logic: Storage setup
         obs = torch.zeros((self.num_steps, self.num_envs) + self.envs.single_observation_space.shape).to(device)
@@ -334,7 +326,7 @@ class PPO:
                 mb_inds = perm[start:end]
 
                 _, new_log_prob, entropy, new_value = self.agent.get_action_and_value(b_obs[mb_inds],
-                                                                                      b_actions[mb_inds])
+                                                                                      b_actions.long()[mb_inds].T)
                 new_log_prob = new_log_prob.to(device)
                 entropy = entropy.to(device)
                 new_value = new_value.to(device)
@@ -421,7 +413,7 @@ class PPO:
         while episode < num_episodes:
 
             with torch.no_grad():
-                action = self.agent.get_action_mean(next_obs)
+                action = self.agent.get_action(next_obs)
 
             # observations[episode][episode_step] = next_obs
             # control_actions[episode][episode_step] = action
