@@ -9,17 +9,18 @@ if __name__ == '__main__':
         'num_targets': 1,
         'noise_strength': 1,
         'rho_g': 5,
-        'region_length': 60,
-        'beta': 3,
+        'region_length': 50,
+        'k_T': 3,
         'dt': 0.05,
+        'k_rep': 100,
     }
 
-    for i in range(5, num_sessions + 5):
+    for i in range(1, num_sessions + 1):
 
         agent = PPO(gym_id="Shepherding-v0",
                     exp_name=f"PPO_vec_pen_2_{i}",
                     gym_params=env_params,
-                    track=True,
+                    track=False,
                     seed=10*1,
                     max_episode_steps=1200,
                     num_episodes=10000,
@@ -31,7 +32,7 @@ if __name__ == '__main__':
                     num_validation_episodes=1000,
                     ent_coef=0,
                     anneal_lr=False,
-                    num_envs=8,
+                    num_envs=1,
                     )
 
         # agent.train()

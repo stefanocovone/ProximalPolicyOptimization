@@ -30,9 +30,9 @@ def record_trigger(episode_id: int) -> bool:
 def make_env(gym_id, seed, idx, capture_video, run_name, max_episode_steps, env_params):
     def thunk():
         if gym_id == "Shepherding-v0":
-            env = gym.make(gym_id, render_mode='human', parameters=env_params)
+            env = gym.make(gym_id, render_mode='rgb_array', parameters=env_params, rand_target=True)
             env._max_episode_steps = max_episode_steps
-            env = LowLevelPPOPolicy(env, 1)
+            env = LowLevelPPOPolicy(env, 100)
             env = FlattenObservation(env)
         else:
             env = gym.make(gym_id, render_mode='rgb_array')
@@ -392,7 +392,7 @@ class PPO:
                        self.run_name, self.max_episode_steps, self.gym_params)
         env = env()
 
-        self.agent.load_state_dict(torch.load(f'runs/{self.run_name}/{self.run_name}_agent.pt'))
+        self.agent.load_state_dict(torch.load(f'runs/{self.run_name}/{self.run_name}_agent.pt', map_location=torch.device(self.device)))
 
         # RESULTS: variables to store results
         num_episodes = self.num_validation_episodes

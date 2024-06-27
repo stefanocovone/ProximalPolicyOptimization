@@ -196,6 +196,9 @@ class AgentResults:
     def settling_time(self):
         settling_times = []
         for settling_time in self.settling_times:
+            mean = np.mean(settling_time)
+            std = np.std(settling_time)
+            print(f"mean: {mean} std: {std}")
             settling_times.extend(settling_time)
         mean = np.mean(settling_times)
         std = np.std(settling_times)
