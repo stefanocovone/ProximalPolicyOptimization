@@ -27,13 +27,13 @@ if __name__ == '__main__':
                     num_episodes=50000,
                     capture_video=False,
                     num_steps=128,
-                    num_minibatches=32,
+                    num_minibatches=128,
                     gamma=0.98,
                     learning_rate=5e-4,
                     num_validation_episodes=1000,
                     ent_coef=0.00,
                     anneal_lr=False,
-                    num_envs=32,
+                    num_envs=128,
                     )
 
         agent.train()
