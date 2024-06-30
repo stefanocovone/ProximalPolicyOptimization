@@ -6,7 +6,7 @@ if __name__ == '__main__':
 
     env_params = {
         'num_herders': 1,
-        'num_targets_max': 7,
+        'num_targets_max': 20,
         'num_targets_min': 2,
         'num_targets': 5,
         'noise_strength': .1,
@@ -14,21 +14,21 @@ if __name__ == '__main__':
         'region_length': 50,
         'k_T': 3,
         'dt': 0.05,
-        'termination': False,
+        'termination': True,
     }
 
     for i in range(1, num_sessions + 1):
 
         agent = PPO(gym_id="Shepherding-v0",
-                    exp_name=f"PPO_1M_random2_{i}",
+                    exp_name=f"PPO_1M_random3_{i}",
                     gym_params=env_params,
                     track=True,
                     seed=10*i,
-                    max_episode_steps=2000,
+                    max_episode_steps=5000,
                     num_episodes=200000,
                     capture_video=False,
-                    num_steps=128,
-                    num_minibatches=128,
+                    num_steps=256,
+                    num_minibatches=256,
                     gamma=0.98,
                     learning_rate=5e-4,
                     num_validation_episodes=1000,

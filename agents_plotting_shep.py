@@ -112,7 +112,7 @@ def terminal_episode(vector, n=20):
     if len(succession_indices) > 0:
         return succession_indices[0]
     else:
-        return 20000
+        return 100000
 
 
 Data = namedtuple('Data', ['mean', 'std'])
@@ -148,7 +148,7 @@ class AgentResults:
 
             # compute terminal episodes
             # settling_times_t = compute_settling_time(self.observations_t[i])
-            successful_episode_t = compute_successful_episode(settling_times, 1000)
+            successful_episode_t = compute_successful_episode(settling_times, 1900)
             terminal_episode_t = terminal_episode(successful_episode_t)
             self.terminal_episodes.append(terminal_episode_t)
 

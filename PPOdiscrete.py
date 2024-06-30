@@ -13,7 +13,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from ActorCriticDiscrete import ActorCritic
 
-from shepherding.wrappers import LowLevelPPOPolicy
+from shepherding.wrappers import LowLevelPPOPolicy, TerminateWhenSuccessful
 
 
 def record_trigger(episode_id: int) -> bool:
@@ -32,6 +32,8 @@ def make_env(gym_id, seed, idx, capture_video, run_name, max_episode_steps, env_
         if gym_id == "Shepherding-v0":
             env = gym.make(gym_id, render_mode='rgb_array', parameters=env_params, rand_target=True)
             env._max_episode_steps = max_episode_steps
+            if env_params['termination']:
+                env = TerminateWhenSuccessful(env, num_steps=200)
             env = LowLevelPPOPolicy(env, 20)
             env = FlattenObservation(env)
         else:
