@@ -26,14 +26,14 @@ if __name__ == '__main__':
                     max_episode_steps=2000,
                     num_episodes=50000,
                     capture_video=False,
-                    num_steps=512,
-                    num_minibatches=8,
+                    num_steps=128,
+                    num_minibatches=64,
                     gamma=0.98,
                     learning_rate=5e-4,
                     num_validation_episodes=1000,
                     ent_coef=0.00,
                     anneal_lr=False,
-                    num_envs=8,
+                    num_envs=128,
                     )
 
         agent.train()
