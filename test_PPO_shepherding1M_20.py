@@ -14,7 +14,7 @@ if __name__ == '__main__':
         'region_length': 50,
         'k_T': 3,
         'dt': 0.05,
-        'termination': True,
+        'termination': False,
     }
 
     for i in range(1, num_sessions + 1):
@@ -34,7 +34,7 @@ if __name__ == '__main__':
                     num_validation_episodes=1000,
                     ent_coef=0.00,
                     anneal_lr=False,
-                    num_envs=128,
+                    num_envs=8,
                     )
 
         agent.train()
