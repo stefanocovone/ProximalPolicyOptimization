@@ -36,6 +36,6 @@ if __name__ == '__main__':
                     num_envs=128,
                     )
 
-        # agent.train()
+        agent.train()
         agent.validate()
         agent.close()
