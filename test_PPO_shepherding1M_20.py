@@ -34,7 +34,7 @@ if __name__ == '__main__':
                     num_validation_episodes=1000,
                     ent_coef=0.00,
                     anneal_lr=False,
-                    num_envs=8,
+                    num_envs=128,
                     )
 
         agent.train()
