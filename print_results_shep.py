@@ -13,7 +13,7 @@ if not os.path.exists(save_folder):
 
 sessions = 1
 env_id = "Shepherding-v0"
-agents_list = ["PPO_1M_random"]
+agents_list = ["PPO_1M_random1"]
 agents_label = ["PPO"]
 agents = []
 
@@ -26,7 +26,7 @@ for agent_type in agents_list:
 
 # Plotting
 plot_rewards(*agents, labels=agents_label, filename="shepherdingPPO_rewards.png", moving_avg_size=100,
-             training_length=20000)
+             training_length=50000)
 plot_training_metrics(*agents, labels=agents_label, filename="shepherdingPPO_training.eps")
 plot_validation_metrics(*agents, labels=agents_label, filename="shepherdingPPO_validation.eps")
 plot_agent_data(agents[0], filename="shepherdingPPO_episode.png")

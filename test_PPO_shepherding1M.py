@@ -21,19 +21,19 @@ if __name__ == '__main__':
         agent = PPO(gym_id="Shepherding-v0",
                     exp_name=f"PPO_1M_random1_{i}",
                     gym_params=env_params,
-                    track=False,
+                    track=True,
                     seed=10*i,
                     max_episode_steps=2000,
-                    num_episodes=50000,
+                    num_episodes=100000,
                     capture_video=False,
                     num_steps=128,
-                    num_minibatches=128,
+                    num_minibatches=256,
                     gamma=0.98,
                     learning_rate=5e-4,
                     num_validation_episodes=1000,
                     ent_coef=0.00,
                     anneal_lr=False,
-                    num_envs=128,
+                    num_envs=256,
                     )
 
         agent.train()
