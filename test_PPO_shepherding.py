@@ -15,20 +15,20 @@ if __name__ == '__main__':
         'k_rep': 100,
     }
 
-    for i in range(1, num_sessions + 1):
+    for i in range(2, num_sessions + 2):
 
         agent = PPO(gym_id="Shepherding-v0",
-                    exp_name=f"PPO_vec_pen_2_{i}",
+                    exp_name=f"PPO_{i}",
                     gym_params=env_params,
                     track=False,
                     seed=10*1,
                     max_episode_steps=1200,
-                    num_episodes=10000,
+                    num_episodes=20000,
                     capture_video=False,
-                    num_steps=2048,
+                    num_steps=4096,
                     num_minibatches=128,
                     gamma=0.98,
-                    learning_rate=1e-3,
+                    learning_rate=5e-4,
                     num_validation_episodes=1000,
                     ent_coef=0,
                     anneal_lr=False,

@@ -104,7 +104,7 @@ def compute_successful_episode(settling_times, threshold):
     return successful_episode
 
 
-def terminal_episode(vector, n=100):
+def terminal_episode(vector, n=20):
     # Find the indices of the first occurrence of n consecutive True values
     succession_indices = np.where(np.convolve(vector, np.ones(n), mode='valid') == n)[0]
 
@@ -112,7 +112,7 @@ def terminal_episode(vector, n=100):
     if len(succession_indices) > 0:
         return succession_indices[0]
     else:
-        return 10000
+        return 20000
 
 
 Data = namedtuple('Data', ['mean', 'std'])
@@ -136,17 +136,19 @@ class AgentResults:
         self.rewards = []
         self.terminal_episodes = []
         self.observations_t = []
+        self.settling_times = []
         for i in range(self.sessions):
             filename = f"{self.file_prefix}_{i + 1}_training.npz"
             file_path = os.path.join(f"./runs/{self.file_prefix}_{i + 1}", filename)
             training_results = np.load(file_path)
 
             self.rewards.append(training_results["cumulative_rewards"])
-            self.observations_t.append(cart_to_polar(training_results["observations"].squeeze()))
+            # self.observations_t.append(cart_to_polar(training_results["observations"].squeeze()))
+            settling_times = training_results["settling_times"]
 
             # compute terminal episodes
-            settling_times_t = compute_settling_time(self.observations_t[i])
-            successful_episode_t = compute_successful_episode(settling_times_t, 1000)
+            # settling_times_t = compute_settling_time(self.observations_t[i])
+            successful_episode_t = compute_successful_episode(settling_times, 1000)
             terminal_episode_t = terminal_episode(successful_episode_t)
             self.terminal_episodes.append(terminal_episode_t)
 

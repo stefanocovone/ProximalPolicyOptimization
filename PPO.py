@@ -224,10 +224,13 @@ class PPO:
         next_done = torch.zeros(self.num_envs).to(device)
         num_updates = int(np.ceil(self.total_timesteps // self.batch_size))+2
 
-        observations = torch.zeros((self.num_steps * num_updates,
-                                    self.num_envs) + self.envs.single_observation_space.shape).to(device)
-        cumulative_rewards = torch.zeros((self.num_steps * num_updates,
-                                         self.num_envs)).to(device)
+        # observations = torch.zeros((self.num_steps * num_updates,
+        #                             self.num_envs) + self.envs.single_observation_space.shape).to(device)
+        # cumulative_rewards = torch.zeros((self.num_steps * num_updates,
+        #                                  self.num_envs)).to(device)
+
+        cum_rewards = np.zeros(self.num_episodes + 100)
+        settling_times = np.zeros(self.num_episodes + 100)
 
         update = 0
         episode_step = 0
@@ -265,19 +268,22 @@ class PPO:
                     episode += self.num_envs
                     episode_step = 0
                     episodic_return = np.array([x['episode']['r'] for x in info['final_info']])
+                    set_times = np.array([x['settling_time'] for x in info['final_info']])
                     # cumulative_rewards[episode - 1] = episodic_return
                     episode_labels = np.array([f"episode={episode - 7 + i}, reward = " for i in range(len(episodic_return))])
                     print_strings = [label + str(value) for label, value in zip(episode_labels, episodic_return)]
                     print("\n".join(print_strings))
                     # print(f"episode={episode}, episodic_return={episodic_return}")
+                    cum_rewards[(episode - self.num_envs):episode] = episodic_return.squeeze()
+                    settling_times[(episode - self.num_envs):episode] = set_times.squeeze()
                     if self.track:
                         pass
                         # self.writer.add_scalar("charts/episodic_return", episodic_return, global_step)
                     if episode >= num_episodes:
                         break
 
-            observations[(update-1)*self.num_steps:(update-1)*self.num_steps + self.num_steps] = obs
-            cumulative_rewards[(update - 1) * self.num_steps:(update - 1) * self.num_steps + self.num_steps] = rewards
+            # observations[(update-1)*self.num_steps:(update-1)*self.num_steps + self.num_steps] = obs
+            # cumulative_rewards[(update - 1) * self.num_steps:(update - 1) * self.num_steps + self.num_steps] = rewards
 
             advantages, returns = self._compute_advantage(next_obs, rewards, next_done, dones, values)
             self.optimize(obs, log_probs, actions, advantages, returns, values, global_step, start_time)
@@ -290,13 +296,21 @@ class PPO:
                 #         )
                 torch.save(self.agent.state_dict(), f'runs/{self.run_name}/{self.run_name}_agent.pt')
 
+        # if self.track:
+        #     observations = self.reshape_tensor(observations)[:self.num_episodes, :, :]
+        #     cumulative_rewards = self.reshape_tensor(
+        #         cumulative_rewards.unsqueeze(dim=-1)).squeeze().sum(dim=1)[:self.num_episodes]
+        #     np.savez(f"runs/{self.run_name}/{self.run_name}_training.npz",
+        #              cumulative_rewards=cumulative_rewards.cpu().numpy(),
+        #              observations=observations.cpu().numpy(),
+        #              )
+        #     torch.save(self.agent.state_dict(), f'runs/{self.run_name}/{self.run_name}_agent.pt')
         if self.track:
-            observations = self.reshape_tensor(observations)[:self.num_episodes, :, :]
-            cumulative_rewards = self.reshape_tensor(
-                cumulative_rewards.unsqueeze(dim=-1)).squeeze().sum(dim=1)[:self.num_episodes]
+            cum_rewards = cum_rewards[:self.num_episodes]
+            settling_times = settling_times[:self.num_episodes]
             np.savez(f"runs/{self.run_name}/{self.run_name}_training.npz",
-                     cumulative_rewards=cumulative_rewards.cpu().numpy(),
-                     observations=observations.cpu().numpy(),
+                     cumulative_rewards=cum_rewards,
+                     settling_times=settling_times,
                      )
             torch.save(self.agent.state_dict(), f'runs/{self.run_name}/{self.run_name}_agent.pt')
 

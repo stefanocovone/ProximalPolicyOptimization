@@ -22,26 +22,14 @@ class ActorCritic(nn.Module):
         self.critic = nn.Sequential(
             layer_init(nn.Linear(obs_shape, 128)),
             nn.ReLU(),
-            layer_init(nn.Linear(128, 128)),
-            nn.ReLU(),
             layer_init(nn.Linear(128, 64)),
-            nn.ReLU(),
-            layer_init(nn.Linear(64, 64)),
-            nn.ReLU(),
-            layer_init(nn.Linear(64, 64)),
             nn.ReLU(),
             layer_init(nn.Linear(64, 1), std=1.0),
         )
         self.actor = nn.Sequential(
             layer_init(nn.Linear(obs_shape, 128)),
             nn.ReLU(),
-            layer_init(nn.Linear(128, 128)),
-            nn.ReLU(),
             layer_init(nn.Linear(128, 64)),
-            nn.ReLU(),
-            layer_init(nn.Linear(64, 64)),
-            nn.ReLU(),
-            layer_init(nn.Linear(64, 64)),
             nn.ReLU(),
             layer_init(nn.Linear(64, action_shape.sum()), std=0.01),
         )
