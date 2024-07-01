@@ -27,11 +27,11 @@ class ActorCritic(nn.Module):
             layer_init(nn.Linear(64, 1), std=1.0),
         )
         self.actor = nn.Sequential(
-            layer_init(nn.Linear(obs_shape, 128)),
+            layer_init(nn.Linear(obs_shape, 256)),
             nn.ReLU(),
-            layer_init(nn.Linear(128, 64)),
+            layer_init(nn.Linear(256, 128)),
             nn.ReLU(),
-            layer_init(nn.Linear(64, action_shape.sum()), std=0.01),
+            layer_init(nn.Linear(128, action_shape.sum()), std=0.01),
         )
 
     def get_value(self, x):

@@ -34,9 +34,9 @@ if __name__ == '__main__':
                     num_validation_episodes=1000,
                     ent_coef=0.00,
                     anneal_lr=False,
-                    num_envs=128,
+                    num_envs=1,
                     )
 
-        agent.train()
+        # agent.train()
         agent.validate()
         agent.close()
