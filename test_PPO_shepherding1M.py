@@ -22,7 +22,7 @@ if __name__ == '__main__':
         agent = PPO(gym_id="Shepherding-v0",
                     exp_name=f"PPO_1M_random2_{i}",
                     gym_params=env_params,
-                    track=True,
+                    track=False,
                     seed=10*i,
                     max_episode_steps=2000,
                     num_episodes=200000,
