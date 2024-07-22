@@ -13,7 +13,7 @@ if not os.path.exists(save_folder):
 
 sessions = 1
 env_id = "Shepherding-v0"
-agents_list = ["PPO_1M_random3"]
+agents_list = ["PPO_1M_random2"]
 agents_label = ["PPO"]
 agents = []
 
