@@ -104,7 +104,7 @@ def compute_successful_episode(settling_times, threshold):
     return successful_episode
 
 
-def terminal_episode(vector, n=20):
+def terminal_episode(vector, n=50):
     # Find the indices of the first occurrence of n consecutive True values
     succession_indices = np.where(np.convolve(vector, np.ones(n), mode='valid') == n)[0]
 
