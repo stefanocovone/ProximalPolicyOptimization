@@ -6,10 +6,9 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 FIGURES_FOLDER = './Figures/'
 
-
 def cart_to_polar(observations):
     # Rescale all the quantities to +-region_length
-    observations = np.array(observations) * 60
+    observations = np.array(observations) * 50
 
     # Check if the shape is (100, 1200, 4)
     if observations.shape[-1] != 4:
@@ -38,9 +37,8 @@ def cart_to_polar(observations):
 
     return polar_coords
 
-
 def compute_settling_time_legacy(obs):
-    eta = 5.5
+    eta = 6
 
     # Compute the norm of each state in the obs array
     state_norms = obs[..., 2]
@@ -57,7 +55,6 @@ def compute_settling_time_legacy(obs):
     settling_times = settling_indices
 
     return settling_times
-
 
 def compute_settling_time(positions, threshold=5):
     """
@@ -97,12 +94,10 @@ def compute_settling_time(positions, threshold=5):
 
     return settling_times
 
-
 def compute_successful_episode(settling_times, threshold):
     # Convert settling times to binary values (0 or 1) based on the threshold
     successful_episode = np.array((settling_times < threshold)).astype(int)
     return successful_episode
-
 
 def terminal_episode(vector, n=10):
     # Find the indices of the first occurrence of n consecutive True values
@@ -114,9 +109,7 @@ def terminal_episode(vector, n=10):
     else:
         return 100000
 
-
 Data = namedtuple('Data', ['mean', 'std'])
-
 
 class AgentResults:
     def __init__(self, agent_id, env_id, sessions=1):
@@ -140,6 +133,12 @@ class AgentResults:
         for i in range(self.sessions):
             filename = f"{self.file_prefix}_{i + 1}_training.npz"
             file_path = os.path.join(f"./runs/{self.file_prefix}_{i + 1}", filename)
+
+            # Check if the file exists
+            if not os.path.exists(file_path):
+                print(f"File not found: {file_path}. Skipping this session.")
+                continue
+
             training_results = np.load(file_path)
 
             self.rewards.append(training_results["cumulative_rewards"])
@@ -161,16 +160,22 @@ class AgentResults:
         for i in range(self.sessions):
             filename = f"{self.file_prefix}_{i + 1}_validation.npz"
             file_path = os.path.join(f"./runs/{self.file_prefix}_{i + 1}", filename)
+
+            # Check if the file exists
+            if not os.path.exists(file_path):
+                print(f"File not found: {file_path}. Skipping this session.")
+                continue
+
             validation_results = np.load(file_path)
 
             observations_v = cart_to_polar(validation_results["observations"].squeeze())
             self.observations_v.append(observations_v)
             self.actions.append(validation_results["control_actions"].squeeze())
 
-            settling_times_v = compute_settling_time(observations_v)
+            settling_times_v = compute_settling_time_legacy(observations_v)
             self.settling_times.append(settling_times_v)
 
-            self.successful_episodes.append(compute_successful_episode(settling_times_v, 1000))
+            self.successful_episodes.append(compute_successful_episode(settling_times_v, 1150))
 
         self.actions = np.clip(self.actions, -8, 8)
 
@@ -209,7 +214,7 @@ class AgentResults:
     def success_rate(self):
         success_rates = []
         for success in self.successful_episodes:
-            success_rate = np.mean(success)*100
+            success_rate = np.mean(success) * 100
             success_rates.append(success_rate)
         mean = np.mean(success_rates)
         std = np.std(success_rates)
@@ -225,7 +230,6 @@ class AgentResults:
         std = np.std(control_norm)
         return Data(mean, std)
 
-
 def moving_average(data, window_size):
     moving_avg = np.zeros_like(data)
     for i, sequence in enumerate(data):
@@ -234,7 +238,6 @@ def moving_average(data, window_size):
             end_index = j + 1
             moving_avg[i][j] = np.mean(sequence[start_index:end_index])
     return moving_avg
-
 
 def plot_rewards(*agents, labels=None, filename=None, moving_avg_size=100, training_length=10000):
     fig, ax = plt.subplots(figsize=(10, 5))
@@ -263,7 +266,6 @@ def plot_rewards(*agents, labels=None, filename=None, moving_avg_size=100, train
         plt.savefig(os.path.join(FIGURES_FOLDER, 'rewards.pdf'), format='pdf')
 
     plt.show()
-
 
 def plot_training_metrics(*agents, labels=None, filename=None):
     # Define the observations
@@ -303,27 +305,45 @@ def plot_training_metrics(*agents, labels=None, filename=None):
         plt.savefig(os.path.join(FIGURES_FOLDER, 'training_metrics.pdf'), format='pdf')
     plt.show()
 
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+
+FIGURES_FOLDER = './Figures/'  # Ensure this directory exists or adjust as needed
 
 def plot_validation_metrics(*agents, labels=None, filename=None):
     # Define the observations
     metrics = ['Timestep', '%', 'velocity']
-    stats = [[agent.settling_time(),
-              agent.success_rate(),
-              agent.control_effort()] for agent in agents]
+    fig, axs = plt.subplots(1, 3, figsize=(12, 3))
 
-    means = [[stat.mean for stat in stat_list] for stat_list in stats]
-    stds = [[stat.std for stat in stat_list] for stat_list in stats]
+    for j, agent in enumerate(agents):
+        settling_times = agent.settling_times
+        success_rates = agent.successful_episodes
+        control_efforts = agent.actions
 
-    # Plotting
-    fig, axs = plt.subplots(1, 3, figsize=(10, 3))
+        # Calculate means and stds for each session
+        for i in range(len(settling_times)):  # Use the length of available settling_times
+            if len(settling_times[i]) == 0:
+                print(f"Skipping session {i+1} for agent {agent.file_prefix} due to missing data.")
+                continue
 
-    for i, metric in enumerate(metrics):
-        for j, agent in enumerate(agents):
-            agent_label = labels[j] if labels else "agent_name"
-            axs[i].errorbar([agent_label], [means[j][i]], yerr=[stds[j][i]], fmt='o', capsize=5, label=metric)
-            print(f"Mean {metric}: {means[j][i]}, Std {metric}: {stds[j][i]}")  # Print mean and std
-        axs[i].grid(True)
-        axs[i].set_ylabel(metric)
+            mean_settling_time = np.mean(settling_times[i])
+            std_settling_time = np.std(settling_times[i])
+            mean_success_rate = np.mean(success_rates[i]) * 100
+            std_success_rate = 0
+            mean_control_effort = np.mean(np.linalg.norm(control_efforts[i], axis=-1))
+            std_control_effort = np.std(np.linalg.norm(control_efforts[i], axis=-1))
+
+            agent_label = labels[j] if labels else agent.file_prefix
+            session_label = f"{agent_label}{i+1}"
+
+            axs[0].errorbar([session_label], [mean_settling_time], yerr=[std_settling_time], fmt='o', capsize=5, label=f'{metrics[0]} {session_label}')
+            axs[1].errorbar([session_label], [mean_success_rate], yerr=[std_success_rate], fmt='o', capsize=5, label=f'{metrics[1]} {session_label}')
+            axs[2].errorbar([session_label], [mean_control_effort], yerr=[std_control_effort], fmt='o', capsize=5, label=f'{metrics[2]} {session_label}')
+
+    for ax, metric in zip(axs, metrics):
+        ax.grid(True)
+        ax.set_ylabel(metric)
 
     axs[0].set_title('Settling Time')
     axs[1].set_title('Success Rate')

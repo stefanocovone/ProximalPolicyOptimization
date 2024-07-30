@@ -15,13 +15,13 @@ if __name__ == '__main__':
         'k_rep': 100,
     }
 
-    for i in range(4, num_sessions + 1):
+    for i in range(1, num_sessions + 1):
 
         agent = PPO(gym_id="Shepherding-v0",
-                    exp_name=f"PPO_{i}",
+                    exp_name=f"PPO_H_{i}",
                     gym_params=env_params,
                     track=True,
-                    seed=60*1,
+                    seed=10*1,
                     max_episode_steps=1200,
                     num_episodes=20000,
                     capture_video=False,
@@ -32,9 +32,10 @@ if __name__ == '__main__':
                     num_validation_episodes=1000,
                     ent_coef=0,
                     anneal_lr=False,
-                    num_envs=8,
+                    num_envs=1,
                     )
 
-        agent.train()
-        agent.validate()
+        # agent.train()
+        # agent.validate()
+        agent.validate_heuristic()
         agent.close()

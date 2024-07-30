@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from gymnasium.wrappers import FlattenObservation
+from shepherding.utils.control_rules import herder_actions
 from torch.utils.tensorboard import SummaryWriter
 
 from ActorCritic import ActorCritic
@@ -18,7 +19,6 @@ from shepherding.wrappers import DeterministicReset, SingleAgentReward, FlattenA
 
 
 def record_trigger(episode_id: int) -> bool:
-
     episodes = [0, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 10050, 10100, 10120, 10180]
     record = (episode_id % 1000 == 0)
     val_ep = [10010, 10020, 10040, 10060, 10080, 10100, 10120, 10140, 10160, 10180]
@@ -31,7 +31,7 @@ def record_trigger(episode_id: int) -> bool:
 def make_env(gym_id, seed, idx, capture_video, run_name, max_episode_steps, env_params):
     def thunk():
         if gym_id == "Shepherding-v0":
-            env = gym.make(gym_id, render_mode='human', parameters=env_params)
+            env = gym.make(gym_id, render_mode='rgb_array', parameters=env_params)
             env._max_episode_steps = max_episode_steps
             # env = DeterministicReset(env)
             env = FlattenAction(env)
@@ -50,6 +50,7 @@ def make_env(gym_id, seed, idx, capture_video, run_name, max_episode_steps, env_
         env.observation_space.seed(seed)
         env.reset(seed=seed)
         return env
+
     return thunk
 
 
@@ -206,7 +207,6 @@ class PPO:
         # observations = torch.zeros((num_episodes, self.max_episode_steps, *self.envs.observation_space.shape)).to(device)
         # control_actions = torch.zeros((num_episodes, self.max_episode_steps, *self.envs.action_space.shape)).to(device)
 
-
         # ALGO Logic: Storage setup
         obs = torch.zeros((self.num_steps, self.num_envs) + self.envs.single_observation_space.shape).to(device)
         actions = torch.zeros((self.num_steps, self.num_envs) + self.envs.single_action_space.shape).to(device)
@@ -222,7 +222,7 @@ class PPO:
         next_obs, _ = self.envs.reset()
         next_obs = torch.Tensor(next_obs).to(device)
         next_done = torch.zeros(self.num_envs).to(device)
-        num_updates = int(np.ceil(self.total_timesteps // self.batch_size))+2
+        num_updates = int(np.ceil(self.total_timesteps // self.batch_size)) + 2
 
         # observations = torch.zeros((self.num_steps * num_updates,
         #                             self.num_envs) + self.envs.single_observation_space.shape).to(device)
@@ -270,7 +270,8 @@ class PPO:
                     episodic_return = np.array([x['episode']['r'] for x in info['final_info']])
                     set_times = np.array([x['settling_time'] for x in info['final_info']])
                     # cumulative_rewards[episode - 1] = episodic_return
-                    episode_labels = np.array([f"episode={episode - 7 + i}, reward = " for i in range(len(episodic_return))])
+                    episode_labels = np.array(
+                        [f"episode={episode - 7 + i}, reward = " for i in range(len(episodic_return))])
                     print_strings = [label + str(value) for label, value in zip(episode_labels, episodic_return)]
                     print("\n".join(print_strings))
                     # print(f"episode={episode}, episodic_return={episodic_return}")
@@ -288,7 +289,7 @@ class PPO:
             advantages, returns = self._compute_advantage(next_obs, rewards, next_done, dones, values)
             self.optimize(obs, log_probs, actions, advantages, returns, values, global_step, start_time)
 
-            if self.track and (episode+1) % 1000 == 0:
+            if self.track and (episode + 1) % 1000 == 0:
                 # np.savez(f"runs/{self.run_name}/{self.run_name}_training.npz",
                 #         cumulative_rewards=cumulative_rewards,
                 #         observations=observations.cpu().numpy(),
@@ -414,17 +415,18 @@ class PPO:
                        self.run_name, self.max_episode_steps, self.gym_params)
         env = env()
 
-        self.agent.load_state_dict(torch.load(f'runs/{self.run_name}/{self.run_name}_agent.pt', map_location=torch.device(self.device)))
+        self.agent.load_state_dict(
+            torch.load(f'runs/{self.run_name}/{self.run_name}_agent.pt', map_location=torch.device(self.device)))
 
         # RESULTS: variables to store results
         num_episodes = self.num_validation_episodes
 
-        observations = torch.zeros((int(np.ceil((num_episodes+8) * self.max_episode_steps / self.num_envs)),
+        observations = torch.zeros((int(np.ceil((num_episodes + 8) * self.max_episode_steps / self.num_envs)),
                                     self.num_envs) + self.envs.single_observation_space.shape).to(device)
-        cumulative_rewards = torch.zeros((int(np.ceil((num_episodes+8) * self.max_episode_steps / self.num_envs)),
+        cumulative_rewards = torch.zeros((int(np.ceil((num_episodes + 8) * self.max_episode_steps / self.num_envs)),
                                           self.num_envs)).to(device)
-        control_actions = torch.zeros((int(np.ceil((num_episodes+8) * self.max_episode_steps / self.num_envs)),
-                                      self.num_envs) + self.envs.single_action_space.shape).to(device)
+        control_actions = torch.zeros((int(np.ceil((num_episodes + 8) * self.max_episode_steps / self.num_envs)),
+                                       self.num_envs) + self.envs.single_action_space.shape).to(device)
 
         next_obs, _ = self.envs.reset()
         next_obs = torch.Tensor(next_obs).to(device)
@@ -477,6 +479,7 @@ class PPO:
                      observations=observations.cpu().numpy(),
                      control_actions=control_actions.cpu().numpy(),
                      )
+
 
     def close(self):
         self.envs.close()

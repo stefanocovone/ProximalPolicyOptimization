@@ -30,7 +30,7 @@ def record_trigger(episode_id: int) -> bool:
 def make_env(gym_id, seed, idx, capture_video, run_name, max_episode_steps, env_params):
     def thunk():
         if gym_id == "Shepherding-v0":
-            env = gym.make(gym_id, render_mode='human', parameters=env_params, rand_target=True)
+            env = gym.make(gym_id, render_mode='rgb_array', parameters=env_params, rand_target=True)
             env._max_episode_steps = max_episode_steps
             if env_params['termination']:
                 env = TerminateWhenSuccessful(env, num_steps=200)
