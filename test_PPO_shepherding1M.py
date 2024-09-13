@@ -2,13 +2,13 @@ from PPOdiscrete import PPO
 
 if __name__ == '__main__':
 
-    num_sessions = 2
+    num_sessions = 1
 
     env_params = {
         'num_herders': 1,
         'num_targets_max': 7,
         'num_targets_min': 2,
-        'num_targets': 5,
+        'num_targets': 7,
         'noise_strength': .1,
         'rho_g': 5,
         'region_length': 50,
@@ -17,13 +17,13 @@ if __name__ == '__main__':
         'termination': False,
     }
 
-    for i in range(2, num_sessions + 1):
+    for i in range(3, num_sessions + 3):
 
         agent = PPO(gym_id="Shepherding-v0",
                     exp_name=f"PPO_1M_random2_{i}",
                     gym_params=env_params,
                     track=True,
-                    seed=10*i,
+                    seed=10*3,
                     max_episode_steps=2000,
                     num_episodes=200000,
                     capture_video=False,
@@ -31,12 +31,12 @@ if __name__ == '__main__':
                     num_minibatches=48,
                     gamma=0.98,
                     learning_rate=5e-4,
-                    num_validation_episodes=1000,
+                    num_validation_episodes=50,
                     ent_coef=0.00,
                     anneal_lr=False,
-                    num_envs=32,
+                    num_envs=1,
                     )
 
-        agent.train()
+        # agent.train()
         agent.validate()
         agent.close()

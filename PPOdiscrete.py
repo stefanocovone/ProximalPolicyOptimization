@@ -30,18 +30,19 @@ def record_trigger(episode_id: int) -> bool:
 def make_env(gym_id, seed, idx, capture_video, run_name, max_episode_steps, env_params):
     def thunk():
         if gym_id == "Shepherding-v0":
-            env = gym.make(gym_id, render_mode='rgb_array', parameters=env_params, rand_target=True)
+            env = gym.make(gym_id, render_mode='rgb_array', parameters=env_params, rand_target=False)
             env._max_episode_steps = max_episode_steps
             if env_params['termination']:
                 env = TerminateWhenSuccessful(env, num_steps=200)
-            env = LowLevelPPOPolicy(env, 20)
+            if capture_video and idx == 0:
+                env = gym.wrappers.RecordVideo(env, f"videos/{run_name}", episode_trigger=record_trigger)
             env = FlattenObservation(env)
+            env = LowLevelPPOPolicy(env, 20)
         else:
             env = gym.make(gym_id, render_mode='rgb_array')
             env._max_episode_steps = max_episode_steps
         env = gym.wrappers.RecordEpisodeStatistics(env)
-        if capture_video and idx == 0:
-            env = gym.wrappers.RecordVideo(env, f"videos/{run_name}", episode_trigger=record_trigger)
+
         # env = gym.wrappers.NormalizeReward(env)
 
         env.action_space.seed(seed)
@@ -78,6 +79,20 @@ def _remove_dir(directory):
                 os.unlink(item_path)
             elif os.path.isdir(item_path):
                 shutil.rmtree(item_path)
+
+
+def reshape_tensor(tensor, episode_length):
+    slices = tensor.split(episode_length, dim=0)
+
+    # List to store the reshaped slices
+    reshaped_slices = []
+    for s in slices:
+        reshaped_s = s.permute(1, 0, 2)
+        reshaped_slices.append(reshaped_s)
+
+    # Combine the reshaped slices back into a single tensor
+    result = torch.cat(reshaped_slices[:-1], dim=0)
+    return result
 
 
 class PPO:
@@ -312,20 +327,6 @@ class PPO:
                      )
             torch.save(self.agent.state_dict(), f'runs/{self.run_name}/{self.run_name}_agent.pt')
 
-    def reshape_tensor(self, tensor):
-        slices = tensor.split(self.max_episode_steps, dim=0)
-
-        # List to store the reshaped slices
-        reshaped_slices = []
-        for s in slices:
-            reshaped_s = s.permute(1, 0, 2)
-            reshaped_slices.append(reshaped_s)
-
-        # Combine the reshaped slices back into a single tensor
-        result = torch.cat(reshaped_slices[:-1], dim=0)
-        return result
-
-
     def optimize(self, obs, log_probs, actions, advantages, returns, values, global_step, start_time):
         device = self.device  # Ensuring all operations are on the correct device
         # Flatten the batch
@@ -418,11 +419,11 @@ class PPO:
         # RESULTS: variables to store results
         num_episodes = self.num_validation_episodes
 
-        observations = torch.zeros((int(np.ceil((num_episodes+8) * self.max_episode_steps / self.num_envs)),
+        observations = torch.zeros((int(np.ceil((num_episodes) * self.max_episode_steps / self.num_envs)),
                                     self.num_envs) + self.envs.single_observation_space.shape).to(device)
-        cumulative_rewards = torch.zeros((int(np.ceil((num_episodes+8) * self.max_episode_steps / self.num_envs)),
+        cumulative_rewards = torch.zeros((int(np.ceil((num_episodes) * self.max_episode_steps / self.num_envs / 20)),
                                           self.num_envs)).to(device)
-        control_actions = torch.zeros((int(np.ceil((num_episodes+8) * self.max_episode_steps / self.num_envs)),
+        control_actions = torch.zeros((int(np.ceil((num_episodes) * self.max_episode_steps / self.num_envs / 20)),
                                       self.num_envs) + self.envs.single_action_space.shape).to(device)
 
         next_obs, _ = self.envs.reset()
@@ -439,14 +440,21 @@ class PPO:
             # observations[episode][episode_step] = next_obs
             # control_actions[episode][episode_step] = action
 
-            observations[step] = next_obs
-            control_actions[step] = action
+            # observations[step] = next_obs
+            control_actions[int(step/20)] = action
 
             # TRY NOT TO MODIFY: execute the game and log observations.
             next_obs, reward, terminated, truncated, info = self.envs.step(action.cpu().numpy())
-            cumulative_rewards[step] = torch.Tensor(reward).squeeze().to(device)
-            episode_step += 1
-            step += 1
+            cumulative_rewards[int(step/20)] = torch.Tensor(reward).squeeze().to(device)
+
+            if "final_info" not in info.keys():
+                caccola = torch.Tensor(np.array([x for x in info['obs_batch']])).to(device).permute(1,0,2)
+                observations[step:(step + 20)] = caccola
+            else:
+                caccola = torch.Tensor(np.array([x['obs_batch'] for x in info['final_info']])).to(device).permute(1, 0, 2)
+                observations[step:(step + 20)] = caccola
+            episode_step += 20
+            step += 20
             done = np.logical_or(terminated, truncated)
             next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(done).to(device)
 
@@ -465,10 +473,10 @@ class PPO:
                     # self.writer.add_scalar("charts/episodic_return", episodic_return, global_step)
 
         if self.track:
-            observations = self.reshape_tensor(observations)[:num_episodes, :, :]
-            control_actions = self.reshape_tensor(control_actions)[:num_episodes, :, :]
-            cumulative_rewards = self.reshape_tensor(
-                cumulative_rewards.unsqueeze(dim=-1)).squeeze().sum(dim=1)[:num_episodes]
+            observations = reshape_tensor(observations, self.max_episode_steps)[:num_episodes, :, :]
+            control_actions = reshape_tensor(control_actions, int(self.max_episode_steps/20))[:num_episodes, :, :]
+            cumulative_rewards = reshape_tensor(
+                cumulative_rewards.unsqueeze(dim=-1), int(self.max_episode_steps/20)).squeeze().sum(dim=1)[:num_episodes]
 
             save_path = f"runs/{self.run_name}/{self.run_name}_validation.npz"
             np.savez(save_path,

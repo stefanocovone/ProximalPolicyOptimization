@@ -6,9 +6,7 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 FIGURES_FOLDER = './Figures/'
 
-def cart_to_polar(observations, num_herders=1):
-    # Rescale all the quantities to +-region_length
-    observations = np.array(observations) * 60
+def cart_to_polar(observations, num_herders=2):
 
     # The shape of the observations is (num_episodes, num_steps, 2(N+M))
 
@@ -44,10 +42,12 @@ def cart_to_polar(observations, num_herders=1):
 
 
 def compute_settling_time(obs):
-    eta = 6
+    eta = 7
 
     # Compute the norm of each state in the obs array
-    state_norms = obs[..., 0]
+    targets_norms = obs[..., 0]
+
+    state_norms = np.max(targets_norms, axis=-1)
 
     # Create a boolean mask to identify states inside the goal region
     inside_goal_mask = state_norms < eta
@@ -55,7 +55,7 @@ def compute_settling_time(obs):
     # Reverse the boolean mask along the steps axis
     reversed_mask = np.flip(inside_goal_mask, axis=1).astype(int)
     # Find the index of the first occurrence of True in the reversed mask
-    settling_indices = 1200 - np.argmin(reversed_mask, axis=1)
+    settling_indices = 2000 - np.argmin(reversed_mask, axis=1)
 
     # Convert indices to settling times
     settling_times = settling_indices
@@ -68,7 +68,7 @@ def compute_successful_episode(settling_times, threshold):
     successful_episode = np.array((settling_times < threshold)).astype(int)
     return successful_episode
 
-def terminal_episode(vector, n=10):
+def terminal_episode(vector, n=20):
     # Find the indices of the first occurrence of n consecutive True values
     succession_indices = np.where(np.convolve(vector, np.ones(n), mode='valid') == n)[0]
 
@@ -77,6 +77,31 @@ def terminal_episode(vector, n=10):
         return succession_indices[0]
     else:
         return 100000
+
+
+def compute_cooperative_metric(actions):
+    """
+    Compute the cooperative metric (CM) for a given set of herder actions.
+
+    Parameters:
+    actions (numpy array): A 3D numpy array of shape (episodes, episode_length, num_herders)
+                           where actions[e, t, h] is the action taken by herder h in episode e at time step t.
+
+    Returns:
+    numpy array: A 1D numpy array of shape (episodes,) containing the average CM for each episode.
+    """
+    episodes, episode_length, num_herders = actions.shape
+
+    cm = np.zeros((episodes, episode_length))
+
+    for e in range(episodes):
+        for t in range(episode_length):
+            unique_actions = np.unique(actions[e, t])
+            cm[e, t] = len(unique_actions) / num_herders
+    average_cm = np.mean(cm, axis=1)
+
+    return average_cm
+
 
 Data = namedtuple('Data', ['mean', 'std'])
 
@@ -93,6 +118,7 @@ class AgentResults:
         self.observations_v = None
         self.actions = None
         self.successful_episodes = None
+        self.cooperative_metric = None
 
     def load_training(self):
         self.rewards = []
@@ -116,7 +142,7 @@ class AgentResults:
 
             # compute terminal episodes
             # settling_times_t = compute_settling_time(self.observations_t[i])
-            successful_episode_t = compute_successful_episode(settling_times, 1000)
+            successful_episode_t = compute_successful_episode(settling_times, 1900)
             terminal_episode_t = terminal_episode(successful_episode_t)
             self.terminal_episodes.append(terminal_episode_t)
 
@@ -125,9 +151,10 @@ class AgentResults:
         self.actions = []
         self.observations_v = []
         self.successful_episodes = []
+        self.cooperative_metric = []
 
         for i in range(self.sessions):
-            filename = f"{self.file_prefix}_{i + 1}_validation.npz"
+            filename = f"{self.file_prefix}_M5_{i + 1}_validation.npz"
             file_path = os.path.join(f"./runs/{self.file_prefix}_{i + 1}", filename)
 
             # Check if the file exists
@@ -139,8 +166,10 @@ class AgentResults:
 
             observations_v, herder_pos, target_pos = cart_to_polar(validation_results["observations"].squeeze())
             self.observations_v.append(observations_v)
-            self.actions.append(validation_results["control_actions"].squeeze())
-
+            actions = validation_results["control_actions"].squeeze()
+            self.actions.append(actions)
+            cooperative_metric = compute_cooperative_metric(actions)
+            self.cooperative_metric.append(cooperative_metric)
             settling_times_v = compute_settling_time(target_pos)
             self.settling_times.append(settling_times_v)
 
@@ -283,12 +312,12 @@ FIGURES_FOLDER = './Figures/'  # Ensure this directory exists or adjust as neede
 def plot_validation_metrics(*agents, labels=None, filename=None):
     # Define the observations
     metrics = ['Timestep', '%', 'velocity']
-    fig, axs = plt.subplots(1, 2, figsize=(6, 3))
+    fig, axs = plt.subplots(1, 3, figsize=(9, 3))
 
     for j, agent in enumerate(agents):
         settling_times = agent.settling_times
         success_rates = agent.successful_episodes
-        control_efforts = agent.actions
+        cooperative_metrics = agent.cooperative_metric
 
         # Calculate means and stds for each session
         for i in range(len(settling_times)):  # Use the length of available settling_times
@@ -299,24 +328,35 @@ def plot_validation_metrics(*agents, labels=None, filename=None):
             mean_settling_time = np.mean(settling_times[i])
             std_settling_time = np.std(settling_times[i])
             mean_success_rate = np.mean(success_rates[i]) * 100
-            std_success_rate = np.std(success_rates[i]) * 100
-            mean_control_effort = np.mean(np.linalg.norm(control_efforts[i], axis=-1))
-            std_control_effort = np.std(np.linalg.norm(control_efforts[i], axis=-1))
+            std_success_rate = np.std(success_rates[i]) * 0
+            mean_control_effort = np.mean(cooperative_metrics[i])
+            std_control_effort = np.std(cooperative_metrics[i])
+
+            print(f"Settling Times for agent {i + 1}:")
+            print(f"Mean Settling Time: {mean_settling_time}")
+            print(f"Standard Deviation Settling Time: {std_settling_time}\n")
+
+            print(f"Success Rates for agent {i + 1}:")
+            print(f"Mean Success Rate: {mean_success_rate}%")
+
+            print(f"Cooperative for agent {i + 1}:")
+            print(f"Mean CM: {mean_control_effort}")
+            print(f"Standard Deviation CM: {std_control_effort}\n")
 
             agent_label = labels[j] if labels else agent.file_prefix
             session_label = f"{agent_label}{i+1}"
 
             axs[0].errorbar([session_label], [mean_settling_time], yerr=[std_settling_time], fmt='o', capsize=5, label=f'{metrics[0]} {session_label}')
             axs[1].errorbar([session_label], [mean_success_rate], yerr=[std_success_rate], fmt='o', capsize=5, label=f'{metrics[1]} {session_label}')
-            # axs[2].errorbar([session_label], [mean_control_effort], yerr=[std_control_effort], fmt='o', capsize=5, label=f'{metrics[2]} {session_label}')
+            axs[2].errorbar([session_label], [mean_control_effort], yerr=[std_control_effort], fmt='o', capsize=5, label=f'{metrics[2]} {session_label}')
 
     for ax, metric in zip(axs, metrics):
         ax.grid(True)
         ax.set_ylabel(metric)
 
-    axs[0].set_title('Settling Time')
-    axs[1].set_title('Success Rate')
-    # axs[2].set_title('Control Effort')
+    axs[0].set_title('Settling Time (M=5)')
+    axs[1].set_title('Success Rate (M=5)')
+    axs[2].set_title('Cooperative metric (M=5)')
 
     axs[1].set_ylim(0, 110)
 
