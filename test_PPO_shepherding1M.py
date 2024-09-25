@@ -2,7 +2,7 @@ from PPOdiscrete import PPO
 
 if __name__ == '__main__':
 
-    num_sessions = 1
+    num_sessions = 2
 
     env_params = {
         'num_herders': 1,
@@ -17,26 +17,26 @@ if __name__ == '__main__':
         'termination': False,
     }
 
-    for i in range(3, num_sessions + 3):
+    for i in range(1, num_sessions + 1):
 
         agent = PPO(gym_id="Shepherding-v0",
-                    exp_name=f"PPO_1M_random2_{i}",
+                    exp_name=f"PPO_1M_september_{i}",
                     gym_params=env_params,
                     track=True,
-                    seed=10*3,
+                    seed=10 * i,
                     max_episode_steps=2000,
                     num_episodes=200000,
                     capture_video=False,
-                    num_steps=128*4,
-                    num_minibatches=48,
+                    num_steps=int(128 * 128 / 32),  # 128*128/num_envs
+                    num_minibatches=128,
                     gamma=0.98,
                     learning_rate=5e-4,
-                    num_validation_episodes=50,
+                    num_validation_episodes=1000,
                     ent_coef=0.00,
                     anneal_lr=False,
-                    num_envs=1,
+                    num_envs=32,
                     )
 
-        # agent.train()
+        agent.train()
         agent.validate()
         agent.close()
