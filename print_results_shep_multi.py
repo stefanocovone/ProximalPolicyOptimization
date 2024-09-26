@@ -11,9 +11,9 @@ if not os.path.exists(save_folder):
 
 # STANDARD GYM REWARD
 
-sessions = 3
+sessions = 1
 env_id = "Shepherding-v0"
-agents_list = ["PPO_2M", "Lama_2M"]
+agents_list = ["PPO_1M_september2", "Lama_1M"]
 agents_label = ["PPO", "RB"]
 agents = []
 

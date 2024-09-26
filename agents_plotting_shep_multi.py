@@ -90,7 +90,8 @@ def compute_cooperative_metric(actions):
     Returns:
     numpy array: A 1D numpy array of shape (episodes,) containing the average CM for each episode.
     """
-    episodes, episode_length, num_herders = actions.shape
+    episodes, episode_length = actions.shape
+    num_herders = 1
 
     cm = np.zeros((episodes, episode_length))
 
@@ -154,7 +155,7 @@ class AgentResults:
         self.cooperative_metric = []
 
         for i in range(self.sessions):
-            filename = f"{self.file_prefix}_M5_{i + 1}_validation.npz"
+            filename = f"{self.file_prefix}_M7_{i + 1}_validation.npz"
             file_path = os.path.join(f"./runs/{self.file_prefix}_{i + 1}", filename)
 
             # Check if the file exists
