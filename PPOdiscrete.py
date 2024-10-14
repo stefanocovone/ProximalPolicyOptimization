@@ -27,10 +27,10 @@ def record_trigger(episode_id: int) -> bool:
     return record or (episode_id in val_ep)
 
 
-def make_env(gym_id, seed, idx, capture_video, run_name, max_episode_steps, env_params):
+def make_env(gym_id, seed, idx, capture_video, run_name, max_episode_steps, env_params, random_target=True):
     def thunk():
         if gym_id == "Shepherding-v0":
-            env = gym.make(gym_id, render_mode='rgb_array', parameters=env_params, rand_target=True)
+            env = gym.make(gym_id, render_mode='rgb_array', parameters=env_params, rand_target=random_target)
             env._max_episode_steps = max_episode_steps
             if env_params['termination']:
                 env = TerminateWhenSuccessful(env, num_steps=200)
@@ -98,6 +98,7 @@ def reshape_tensor(tensor, episode_length):
 class PPO:
     def __init__(self,
                  exp_name=os.path.basename(__file__).rstrip(".py"),
+                 exp_name_val=os.path.basename(__file__).rstrip(".py"),
                  gym_id="CustomPendulum-v1",
                  gym_params=None,
                  max_episode_steps=400,
@@ -126,6 +127,7 @@ class PPO:
                  max_grad_norm=0.5,
                  target_kl=0.01, ):
         self.exp_name = exp_name
+        self.exp_name_val = exp_name_val
         self.gym_id = gym_id
         self.gym_params = gym_params
         self.max_episode_steps = max_episode_steps
@@ -159,6 +161,7 @@ class PPO:
         self.minibatch_size = int(self.batch_size // self.num_minibatches)
 
         self.run_name = f"{self.gym_id}__{self.exp_name}"
+        self.run_name_val = f"{self.gym_id}__{self.exp_name_val}"
         self.save_dir = f"runs/{self.run_name}"
 
         if self.track:
@@ -411,7 +414,7 @@ class PPO:
         device = self.device
 
         env = make_env(self.gym_id, self.seed, 0, self.capture_video,
-                       self.run_name, self.max_episode_steps, self.gym_params)
+                       self.run_name, self.max_episode_steps, self.gym_params, random_target=False)
         env = env()
 
         self.agent.load_state_dict(torch.load(f'runs/{self.run_name}/{self.run_name}_agent.pt', map_location=torch.device(self.device)))
@@ -478,7 +481,7 @@ class PPO:
             cumulative_rewards = reshape_tensor(
                 cumulative_rewards.unsqueeze(dim=-1), int(self.max_episode_steps/20)).squeeze().sum(dim=1)[:num_episodes]
 
-            save_path = f"runs/{self.run_name}/{self.run_name}_validation.npz"
+            save_path = f"runs/{self.run_name}/{self.run_name_val}_validation.npz"
             np.savez(save_path,
                      cumulative_rewards=cumulative_rewards.cpu().numpy(),
                      observations=observations.cpu().numpy(),

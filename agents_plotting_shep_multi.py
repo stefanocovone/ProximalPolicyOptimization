@@ -310,9 +310,13 @@ import matplotlib.pyplot as plt
 
 FIGURES_FOLDER = './Figures/'  # Ensure this directory exists or adjust as needed
 
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+
 def plot_validation_metrics(*agents, labels=None, filename=None):
     # Define the observations
-    metrics = ['Timestep', '%', 'velocity']
+    metrics = ['Timestep', '%', '']
     fig, axs = plt.subplots(1, 3, figsize=(9, 3))
 
     for j, agent in enumerate(agents):
@@ -360,6 +364,27 @@ def plot_validation_metrics(*agents, labels=None, filename=None):
     axs[2].set_title('Cooperative metric (M=5)')
 
     axs[1].set_ylim(0, 110)
+    axs[2].set_ylim(0, 1.10)
+
+    # # Add a detail view for the third metric between 0.95 and 1.05
+    # ax_detail = fig.add_axes([0.79, 0.22, 0.18, 0.5])  # Position of the detail view (left, bottom, width, height)
+    # # ax_detail.set_title('Detail View (0.95 - 1.05)')
+    # ax_detail.grid(True)
+    # ax_detail.set_ylim(0.985, 1.01)
+    #
+    # for j, agent in enumerate(agents):
+    #     cooperative_metrics = agent.cooperative_metric
+    #     for i in range(len(cooperative_metrics)):
+    #         if len(cooperative_metrics[i]) == 0:
+    #             continue
+    #
+    #         mean_control_effort = np.mean(cooperative_metrics[i])
+    #         std_control_effort = np.std(cooperative_metrics[i])
+    #
+    #         agent_label = labels[j] if labels else agent.file_prefix
+    #         session_label = f"{agent_label}{i+1}"
+    #
+    #         ax_detail.errorbar([session_label], [mean_control_effort], yerr=[std_control_effort], fmt='o', capsize=5)
 
     plt.tight_layout()
     if filename:
@@ -367,6 +392,7 @@ def plot_validation_metrics(*agents, labels=None, filename=None):
     else:
         plt.savefig(os.path.join(FIGURES_FOLDER, 'validation_metrics.pdf'), format='pdf')
     plt.show()
+
 
 
 def plot_agent_data(agent, filename=None):
