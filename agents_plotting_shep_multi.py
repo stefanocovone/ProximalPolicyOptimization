@@ -310,24 +310,25 @@ import matplotlib.pyplot as plt
 
 FIGURES_FOLDER = './Figures/'  # Ensure this directory exists or adjust as needed
 
-import os
 import numpy as np
 import matplotlib.pyplot as plt
+import os
+
 
 def plot_validation_metrics(*agents, labels=None, filename=None):
-    # Define the observations
     metrics = ['Timestep', '%', '']
     fig, axs = plt.subplots(1, 3, figsize=(9, 3))
+
+    # Aggiungi un piccolo offset orizzontale per separare i punti
+    x_offsets = np.linspace(-0, 0, len(agents))
 
     for j, agent in enumerate(agents):
         settling_times = agent.settling_times
         success_rates = agent.successful_episodes
         cooperative_metrics = agent.cooperative_metric
 
-        # Calculate means and stds for each session
-        for i in range(len(settling_times)):  # Use the length of available settling_times
+        for i in range(len(settling_times)):
             if len(settling_times[i]) == 0:
-                print(f"Skipping session {i+1} for agent {agent.file_prefix} due to missing data.")
                 continue
 
             mean_settling_time = np.mean(settling_times[i])
@@ -337,27 +338,26 @@ def plot_validation_metrics(*agents, labels=None, filename=None):
             mean_control_effort = np.mean(cooperative_metrics[i])
             std_control_effort = np.std(cooperative_metrics[i])
 
-            print(f"Settling Times for agent {i + 1}:")
-            print(f"Mean Settling Time: {mean_settling_time}")
-            print(f"Standard Deviation Settling Time: {std_settling_time}\n")
-
-            print(f"Success Rates for agent {i + 1}:")
-            print(f"Mean Success Rate: {mean_success_rate}%")
-
-            print(f"Cooperative for agent {i + 1}:")
-            print(f"Mean CM: {mean_control_effort}")
-            print(f"Standard Deviation CM: {std_control_effort}\n")
-
             agent_label = labels[j] if labels else agent.file_prefix
-            session_label = f"{agent_label}{i+1}"
+            session_label = f"{agent_label}"
 
-            axs[0].errorbar([session_label], [mean_settling_time], yerr=[std_settling_time], fmt='o', capsize=5, label=f'{metrics[0]} {session_label}')
-            axs[1].errorbar([session_label], [mean_success_rate], yerr=[std_success_rate], fmt='o', capsize=5, label=f'{metrics[1]} {session_label}')
-            axs[2].errorbar([session_label], [mean_control_effort], yerr=[std_control_effort], fmt='o', capsize=5, label=f'{metrics[2]} {session_label}')
+            # Applica l'offset orizzontale
+            axs[0].errorbar([j + x_offsets[j]], [mean_settling_time], yerr=[std_settling_time], fmt='o', capsize=5,
+                            label=f'{metrics[0]} {session_label}')
+            axs[1].errorbar([j + x_offsets[j]], [mean_success_rate], yerr=[std_success_rate], fmt='o', capsize=5,
+                            label=f'{metrics[1]} {session_label}')
+            axs[2].errorbar([j + x_offsets[j]], [mean_control_effort], yerr=[std_control_effort], fmt='o', capsize=5,
+                            label=f'{metrics[2]} {session_label}')
 
+    # Configura il layout degli assi
     for ax, metric in zip(axs, metrics):
         ax.grid(True)
         ax.set_ylabel(metric)
+        ax.set_xticks(range(len(agents)))
+        ax.set_xticklabels([labels[j] if labels else agent.file_prefix for j in range(len(agents))])
+
+        # Imposta i limiti per avere più spazio sugli estremi
+        ax.set_xlim(-0.5, len(agents) - 0.5)  # Aggiungi margine agli estremi
 
     axs[0].set_title('Settling Time (M=5)')
     axs[1].set_title('Success Rate (M=5)')
@@ -366,33 +366,12 @@ def plot_validation_metrics(*agents, labels=None, filename=None):
     axs[1].set_ylim(0, 110)
     axs[2].set_ylim(0, 1.10)
 
-    # # Add a detail view for the third metric between 0.95 and 1.05
-    # ax_detail = fig.add_axes([0.79, 0.22, 0.18, 0.5])  # Position of the detail view (left, bottom, width, height)
-    # # ax_detail.set_title('Detail View (0.95 - 1.05)')
-    # ax_detail.grid(True)
-    # ax_detail.set_ylim(0.985, 1.01)
-    #
-    # for j, agent in enumerate(agents):
-    #     cooperative_metrics = agent.cooperative_metric
-    #     for i in range(len(cooperative_metrics)):
-    #         if len(cooperative_metrics[i]) == 0:
-    #             continue
-    #
-    #         mean_control_effort = np.mean(cooperative_metrics[i])
-    #         std_control_effort = np.std(cooperative_metrics[i])
-    #
-    #         agent_label = labels[j] if labels else agent.file_prefix
-    #         session_label = f"{agent_label}{i+1}"
-    #
-    #         ax_detail.errorbar([session_label], [mean_control_effort], yerr=[std_control_effort], fmt='o', capsize=5)
-
     plt.tight_layout()
     if filename:
         plt.savefig(os.path.join(FIGURES_FOLDER, filename), format='pdf')
     else:
         plt.savefig(os.path.join(FIGURES_FOLDER, 'validation_metrics.pdf'), format='pdf')
     plt.show()
-
 
 
 def plot_agent_data(agent, filename=None):

@@ -13,8 +13,8 @@ if not os.path.exists(save_folder):
 
 sessions = 5
 env_id = "Shepherding-v0"
-agents_list = ["PPO"]
-agents_label = ["PPO"]
+agents_list = ["PPO", "Lama"]
+agents_label = ["PPO", "Lama"]
 agents = []
 
 # Create and load agents
@@ -25,11 +25,11 @@ for agent_type in agents_list:
     agents.append(agent)
 
 # Plotting
-plot_rewards(*agents, labels=agents_label, filename="shepherdingPPO_L1_rewards.pdf", moving_avg_size=100,
-             training_length=20000)
-plot_training_metrics(*agents, labels=agents_label, filename="shepherdingPPO_L1_training.pdf")
-# plot_validation_metrics(*agents, labels=agents_label, filename="shepherdingPPO_L1_validation.pdf")
-plot_agent_data(agents[0], filename="shepherdingPPO_L1_episode.pdf")
+# plot_rewards(*agents, labels=agents_label, filename="shepherdingPPO_L1_rewards.pdf", moving_avg_size=100,
+#              training_length=20000)
+# plot_training_metrics(*agents, labels=agents_label, filename="shepherdingPPO_L1_training.pdf")
+plot_validation_metrics(*agents, labels=agents_label, filename="shepherdingPPO_L1_validation.pdf")
+# plot_agent_data(agents[0], filename="shepherdingPPO_L1_episode.pdf")
 
 
 plt.show()

@@ -7,9 +7,9 @@ def parse_arguments():
 
     # Optional arguments for reward parameters
     parser.add_argument('--k_R', type=float, default=0.01, help="Reward parameter k_R")
-    parser.add_argument('--k_p', type=float, default=5, help="Reward parameter k_p")
+    parser.add_argument('--k_p', type=float, default=0, help="Reward parameter k_p")
     parser.add_argument('--k_all', type=float, default=0, help="Reward parameter k_all")
-    parser.add_argument('--k_chi', type=float, default=0, help="Reward parameter k_chi")
+    parser.add_argument('--k_chi', type=float, default=0.2, help="Reward parameter k_chi")
 
     # Optional argument for validation targets
     parser.add_argument('--num_targets', type=int, default=7, help="Number of targets during validation")
@@ -18,7 +18,7 @@ def parse_arguments():
     parser.add_argument('--l_r', type=float, default=0.0005, help="Learning rate")
 
     # Optional argument for experiment tag
-    parser.add_argument('--exp_tag', type=str, default='test2_1', help="Experiment tag")
+    parser.add_argument('--exp_tag', type=str, default='codetest', help="Experiment tag")
 
     return parser.parse_args()
 
@@ -41,7 +41,9 @@ if __name__ == '__main__':
         'region_length': 50,
         'k_T': 3,
         'dt': 0.05,
-        'termination': False,
+        'termination': True,
+        'random_targets': False,
+        'target_selection_rate': 20,
         # reward params
         'k_R': args.k_R,
         'k_p': args.k_p,
@@ -60,8 +62,9 @@ if __name__ == '__main__':
                     track=True,
                     seed=10 * 1,
                     max_episode_steps=2000,
-                    num_episodes=200000,
+                    num_episodes=1000,
                     capture_video=False,
+                    render=False,
                     num_steps=int(128 * 128 / 32),  # 128*128/num_envs
                     num_minibatches=128,
                     gamma=0.98,
@@ -69,7 +72,7 @@ if __name__ == '__main__':
                     num_validation_episodes=100,
                     ent_coef=0.00,
                     anneal_lr=False,
-                    num_envs=32,  # 32
+                    num_envs=8,  # 32
                     )
 
         agent.train()

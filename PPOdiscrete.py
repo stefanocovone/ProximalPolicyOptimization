@@ -27,17 +27,22 @@ def record_trigger(episode_id: int) -> bool:
     return record or (episode_id in val_ep)
 
 
-def make_env(gym_id, seed, idx, capture_video, run_name, max_episode_steps, env_params, random_target=True):
+def make_env(gym_id, seed, idx, capture_video, run_name, max_episode_steps, env_params, random_target=False, render=False):
     def thunk():
+        if render:
+            render_mode = 'human'
+        else:
+            render_mode = 'rgb_array'
         if gym_id == "Shepherding-v0":
-            env = gym.make(gym_id, render_mode='rgb_array', parameters=env_params, rand_target=random_target)
+            env = gym.make(gym_id, render_mode=render_mode, parameters=env_params, rand_target=random_target)
             env._max_episode_steps = max_episode_steps
             if env_params['termination']:
                 env = TerminateWhenSuccessful(env, num_steps=200)
             if capture_video and idx == 0:
                 env = gym.wrappers.RecordVideo(env, f"videos/{run_name}", episode_trigger=record_trigger)
             env = FlattenObservation(env)
-            env = LowLevelPPOPolicy(env, 20)
+            env = LowLevelPPOPolicy(env, env_params['target_selection_rate'])
+        # Alternative environments to the shepherding
         else:
             env = gym.make(gym_id, render_mode='rgb_array')
             env._max_episode_steps = max_episode_steps
@@ -111,6 +116,7 @@ class PPO:
                  cuda=True,
                  track=False,
                  capture_video=False,
+                 render=False,
                  num_envs=1,
                  num_steps=1024,
                  anneal_lr=True,
@@ -153,6 +159,7 @@ class PPO:
         self.target_kl = target_kl
         self.track = track
         self.capture_video = capture_video
+        self.render = render
         self.torch_deterministic = torch_deterministic
         self.cuda = cuda
 
@@ -180,8 +187,9 @@ class PPO:
 
         # env setup
         self.envs = gym.vector.AsyncVectorEnv(
-            [make_env(self.gym_id, self.seed + i, i, self.capture_video,
-                      self.run_name, self.max_episode_steps, self.gym_params)
+            [make_env(gym_id=self.gym_id, seed=self.seed + i, idx=i, capture_video=self.capture_video,
+                      run_name=self.run_name, max_episode_steps=self.max_episode_steps,
+                      env_params=self.gym_params, random_target=self.gym_params['random_targets'], render=self.render)
              for i in range(self.num_envs)]
         )
         assert isinstance(self.envs.single_action_space, gym.spaces.MultiDiscrete), "only discrete action space is supported"
@@ -216,49 +224,48 @@ class PPO:
         print(f"TRAINING {self.run_name}")
         device = self.device
 
-        # RESULTS: variables to store results
+        # Load agent state if needed
+        # self.agent.load_state_dict(torch.load(f'runs/{self.run_name}/{self.run_name}_agent.pt', map_location=torch.device(self.device)))
+
         num_episodes = self.num_episodes
+        num_envs = self.num_envs
 
-        # ALGO Logic: Storage setup
-        obs = torch.zeros((self.num_steps, self.num_envs) + self.envs.single_observation_space.shape).to(device)
-        actions = torch.zeros((self.num_steps, self.num_envs) + self.envs.single_action_space.shape).to(device)
-        log_probs = torch.zeros((self.num_steps, self.num_envs)).to(device)
-        rewards = torch.zeros((self.num_steps, self.num_envs)).to(device)
-        dones = torch.zeros((self.num_steps, self.num_envs)).to(device)
-        values = torch.zeros((self.num_steps, self.num_envs)).to(device)
-
-        # TRY NOT TO MODIFY: start the game
+        # Initialize variables
         global_step = 0
         episode = 0
         start_time = time.time()
+
         next_obs, _ = self.envs.reset()
         next_obs = torch.Tensor(next_obs).to(device)
-        next_done = torch.zeros(self.num_envs).to(device)
-        num_updates = int(np.ceil(self.total_timesteps // self.batch_size))+2
+        next_done = torch.zeros(num_envs).to(device)
+        num_updates = int(np.ceil(self.total_timesteps / self.batch_size)) + 2
 
-        # observations = torch.zeros((self.num_steps * num_updates,
-        #                             self.num_envs) + self.envs.single_observation_space.shape).to(device)
-        # cumulative_rewards = torch.zeros((self.num_steps * num_updates,
-        #                                  self.num_envs)).to(device)
+        # For logging cumulative rewards and settling times
+        cumulative_rewards = []
+        settling_times = []
 
-        cum_rewards = np.zeros(self.num_episodes+100)
-        settling_times = np.zeros(self.num_episodes+100)
+        # ALGO Logic: Storage setup
+        # We keep the storage tensors for optimization purposes
+        obs = torch.zeros((self.num_steps, num_envs) + self.envs.single_observation_space.shape).to(device)
+        actions = torch.zeros((self.num_steps, num_envs) + self.envs.single_action_space.shape).to(device)
+        log_probs = torch.zeros((self.num_steps, num_envs)).to(device)
+        rewards = torch.zeros((self.num_steps, num_envs)).to(device)
+        dones = torch.zeros((self.num_steps, num_envs)).to(device)
+        values = torch.zeros((self.num_steps, num_envs)).to(device)
 
         update = 0
-        episode_step = 0
 
         while episode < num_episodes:
             update += 1
 
-            # for update in range(1, num_updates + 1):
-            # Annealing the rate if instructed to do so.
+            # Annealing the learning rate if instructed to do so
             if self.anneal_lr:
                 frac = 1.0 - (update - 1.0) / num_updates
                 lrnow = frac * self.learning_rate
                 self.optimizer.param_groups[0]["lr"] = lrnow
 
-            for step in range(0, self.num_steps):
-                global_step += 1 * self.num_envs
+            for step in range(self.num_steps):
+                global_step += num_envs
                 obs[step] = next_obs
                 dones[step] = next_done
 
@@ -269,65 +276,47 @@ class PPO:
                 actions[step] = action
                 log_probs[step] = logprob
 
-                # TRY NOT TO MODIFY: execute the game and log observations.
-                next_obs, reward, terminated, truncated, info = self.envs.step(action.cpu().numpy())
-                episode_step += 1
+                # Execute the action in the environment
+                next_obs_np, reward, terminated, truncated, info = self.envs.step(action.cpu().numpy())
                 done = np.logical_or(terminated, truncated)
                 rewards[step] = torch.tensor(reward).to(device).view(-1)
-                next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(done).to(device)
+                next_obs = torch.Tensor(next_obs_np).to(device)
+                next_done = torch.Tensor(done).to(device)
 
-                if "final_info" in info.keys():
-                    episode += self.num_envs
-                    episode_step = 0
-                    episodic_return = np.array([x['episode']['r'] for x in info['final_info']])
-                    set_times = np.array([x['settling_time'] for x in info['final_info']])
-                    # cumulative_rewards[episode - 1] = episodic_return
-                    episode_labels = np.array([f"episode={episode - 7 + i}, reward = " for i in range(len(episodic_return))])
-                    print_strings = [label + str(value) for label, value in zip(episode_labels, episodic_return)]
-                    print("\n".join(print_strings))
-                    # print(f"episode={episode}, episodic_return={episodic_return}")
+                # Collect per-episode metrics when episodes finish
+                if "final_info" in info:
+                    for env_idx, final_info in enumerate(info["final_info"]):
+                        if final_info is not None:
+                            episodic_return = final_info['episode']['r']
+                            settling_time = final_info.get('settling_time', None)
+                            cumulative_rewards.append(episodic_return)
+                            settling_times.append(settling_time)
+                            episode += 1
+                            print(f"Episode {episode}, Env {env_idx}, Reward: {episodic_return}")
 
-                    cum_rewards[(episode - self.num_envs):episode] = episodic_return.squeeze()
-                    settling_times[(episode - self.num_envs):episode] = set_times.squeeze()
+                            if self.track:
+                                # Log metrics if needed
+                                pass
 
-                    if self.track:
-                        pass
-                        # self.writer.add_scalar("charts/episodic_return", episodic_return, global_step)
-                    if episode >= num_episodes:
-                        break
+                            if episode >= num_episodes:
+                                break  # Exit if we've collected enough episodes
 
-            # observations[(update-1)*self.num_steps:(update-1)*self.num_steps + self.num_steps] = obs
-            # cumulative_rewards[(update - 1) * self.num_steps:(update - 1) * self.num_steps + self.num_steps] = rewards
+                if episode >= num_episodes:
+                    break  # Exit the time step loop if we've collected enough episodes
 
+            # Compute advantages and returns
             advantages, returns = self._compute_advantage(next_obs, rewards, next_done, dones, values)
+
+            # Optimize the agent using the collected data
             self.optimize(obs, log_probs, actions, advantages, returns, values, global_step, start_time)
 
-
-            # if self.track and (episode+1) % 1000 == 0:
-            #     np.savez(f"runs/{self.run_name}/{self.run_name}_training.npz",
-            #             cumulative_rewards=cumulative_rewards,
-            #             observations=observations.cpu().numpy(),
-            #             control_actions=control_actions.cpu().numpy(),
-            #             )
-            #     torch.save(self.agent.state_dict(), f'runs/{self.run_name}/{self.run_name}_agent.pt')
-
-        # if self.track:
-        #     observations = self.reshape_tensor(observations)[:self.num_episodes, :, :]
-        #     cumulative_rewards = self.reshape_tensor(
-        #         cumulative_rewards.unsqueeze(dim=-1)).squeeze().sum(dim=1)[:self.num_episodes]
-        #     np.savez(f"runs/{self.run_name}/{self.run_name}_training.npz",
-        #              cumulative_rewards=cumulative_rewards.cpu().numpy(),
-        #              observations=observations.cpu().numpy(),
-        #              )
-        #     torch.save(self.agent.state_dict(), f'runs/{self.run_name}/{self.run_name}_agent.pt')
-        #
+        # Save training data if tracking is enabled
         if self.track:
-            cum_rewards = cum_rewards[:self.num_episodes]
-            settling_times = settling_times[:self.num_episodes]
+            cumulative_rewards = np.array(cumulative_rewards)
+            settling_times = np.array(settling_times)
             np.savez(f"runs/{self.run_name}/{self.run_name}_training.npz",
-                     cumulative_rewards=cum_rewards,
-                     settling_times=settling_times,
-                     )
+                     cumulative_rewards=cumulative_rewards,
+                     settling_times=settling_times)
             torch.save(self.agent.state_dict(), f'runs/{self.run_name}/{self.run_name}_agent.pt')
 
     def optimize(self, obs, log_probs, actions, advantages, returns, values, global_step, start_time):
@@ -413,80 +402,95 @@ class PPO:
         print(f"VALIDATION {self.run_name}")
         device = self.device
 
-        env = make_env(self.gym_id, self.seed, 0, self.capture_video,
-                       self.run_name, self.max_episode_steps, self.gym_params, random_target=False)
-        env = env()
-
-        self.agent.load_state_dict(torch.load(f'runs/{self.run_name}/{self.run_name}_agent.pt', map_location=torch.device(self.device)))
+        self.agent.load_state_dict(
+            torch.load(f'runs/{self.run_name}/{self.run_name}_agent.pt', map_location=torch.device(self.device)))
 
         # RESULTS: variables to store results
         num_episodes = self.num_validation_episodes
+        num_envs = self.num_envs
 
-        observations = torch.zeros((int(np.ceil((num_episodes) * self.max_episode_steps / self.num_envs)),
-                                    self.num_envs) + self.envs.single_observation_space.shape).to(device)
-        cumulative_rewards = torch.zeros((int(np.ceil((num_episodes) * self.max_episode_steps / self.num_envs / 20)),
-                                          self.num_envs)).to(device)
-        control_actions = torch.zeros((int(np.ceil((num_episodes) * self.max_episode_steps / self.num_envs / 20)),
-                                      self.num_envs) + self.envs.single_action_space.shape).to(device)
+        # Initialize episode storage
+        episodes = []  # List to store episodes in the order they start
+        current_episodes = [None for _ in range(num_envs)]  # Current episode data per environment
+
+        episodes_finished = 0
 
         next_obs, _ = self.envs.reset()
         next_obs = torch.Tensor(next_obs).to(device)
 
-        step = 0
-        episode = 0
-        episode_step = 0
-        while episode < num_episodes:
-
+        while episodes_finished < num_episodes:
             with torch.no_grad():
                 action = self.agent.get_action(next_obs)
 
-            # observations[episode][episode_step] = next_obs
-            # control_actions[episode][episode_step] = action
+            # Execute the action in the environment
+            next_obs_np, reward, terminated, truncated, info = self.envs.step(action.cpu().numpy())
+            next_obs = torch.Tensor(next_obs_np).to(device)
 
-            # observations[step] = next_obs
-            control_actions[int(step/20)] = action
-
-            # TRY NOT TO MODIFY: execute the game and log observations.
-            next_obs, reward, terminated, truncated, info = self.envs.step(action.cpu().numpy())
-            cumulative_rewards[int(step/20)] = torch.Tensor(reward).squeeze().to(device)
-
-            if "final_info" not in info.keys():
-                caccola = torch.Tensor(np.array([x for x in info['obs_batch']])).to(device).permute(1,0,2)
-                observations[step:(step + 20)] = caccola
-            else:
-                caccola = torch.Tensor(np.array([x['obs_batch'] for x in info['final_info']])).to(device).permute(1, 0, 2)
-                observations[step:(step + 20)] = caccola
-            episode_step += 20
-            step += 20
             done = np.logical_or(terminated, truncated)
-            next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(done).to(device)
 
-            if "final_info" in info.keys():
-                episode += self.num_envs
-                episode_step = 0
-                episodic_return = np.array([x['episode']['r'] for x in info['final_info']])
-                # cumulative_rewards[episode - 1] = episodic_return
-                episode_labels = np.array(
-                    [f"episode={episode - 7 + i}, reward = " for i in range(len(episodic_return))])
-                print_strings = [label + str(value) for label, value in zip(episode_labels, episodic_return)]
-                print("\n".join(print_strings))
-                # print(f"episode={episode}, episodic_return={episodic_return}")
-                if self.track:
-                    pass
-                    # self.writer.add_scalar("charts/episodic_return", episodic_return, global_step)
+            # For each environment
+            for env_idx in range(num_envs):
+                # If starting a new episode
+                if current_episodes[env_idx] is None:
+                    # Create a new episode and add it to episodes list
+                    current_episode = {
+                        'observations': [],
+                        'actions': [],
+                        'rewards': []
+                    }
+                    episodes.append(current_episode)
+                    current_episodes[env_idx] = current_episode
 
+                # Add data to current episode
+                current_episodes[env_idx]['observations'].append(next_obs_np[env_idx])  # Store the raw numpy array
+                current_episodes[env_idx]['actions'].append(action[env_idx].cpu().numpy())
+                current_episodes[env_idx]['rewards'].append(reward[env_idx])
+
+                if done[env_idx]:
+                    # Finalize the episode
+                    episodic_return = sum(current_episodes[env_idx]['rewards'])
+                    episodes_finished += 1
+                    print(f"Episode {episodes_finished} finished in env {env_idx}, reward = {episodic_return}")
+
+                    # Reset current episode for this environment
+                    current_episodes[env_idx] = None
+
+                    if episodes_finished >= num_episodes:
+                        break  # Exit if we've collected enough episodes
+
+            if episodes_finished >= num_episodes:
+                break  # Exit outer loop as well
+
+        # Now process the episodes
+
+        # Optionally pad the sequences to the maximum episode length
+        max_length = max(len(episode['observations']) for episode in episodes)
+
+        num_collected_episodes = len(episodes)
+
+        # Prepare arrays for padded data
+        obs_shape = episodes[0]['observations'][0].shape
+        action_shape = episodes[0]['actions'][0].shape
+
+        obs_padded = np.zeros((num_collected_episodes, max_length) + obs_shape, dtype=np.float32)
+        actions_padded = np.zeros((num_collected_episodes, max_length) + action_shape, dtype=np.float32)
+        rewards_padded = np.zeros((num_collected_episodes, max_length), dtype=np.float32)
+        cumulative_rewards = np.zeros(num_collected_episodes, dtype=np.float32)
+
+        for i, episode in enumerate(episodes):
+            length = len(episode['observations'])
+            obs_padded[i, :length] = np.stack(episode['observations'])
+            actions_padded[i, :length] = np.stack(episode['actions'])
+            rewards_padded[i, :length] = np.array(episode['rewards'])
+            cumulative_rewards[i] = sum(episode['rewards'])
+
+        # Save the data
         if self.track:
-            observations = reshape_tensor(observations, self.max_episode_steps)[:num_episodes, :, :]
-            control_actions = reshape_tensor(control_actions, int(self.max_episode_steps/20))[:num_episodes, :, :]
-            cumulative_rewards = reshape_tensor(
-                cumulative_rewards.unsqueeze(dim=-1), int(self.max_episode_steps/20)).squeeze().sum(dim=1)[:num_episodes]
-
-            save_path = f"runs/{self.run_name}/{self.run_name_val}_validation.npz"
+            save_path = f"runs/{self.run_name}/{self.run_name}_validation.npz"
             np.savez(save_path,
-                     cumulative_rewards=cumulative_rewards.cpu().numpy(),
-                     observations=observations.cpu().numpy(),
-                     control_actions=control_actions.cpu().numpy(),
-                     )
+                     cumulative_rewards=cumulative_rewards,
+                     observations=obs_padded,
+                     control_actions=actions_padded)
 
     def close(self):
         self.envs.close()
