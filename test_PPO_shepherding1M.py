@@ -18,7 +18,7 @@ def parse_arguments():
     parser.add_argument('--l_r', type=float, default=0.0005, help="Learning rate")
 
     # Optional argument for experiment tag
-    parser.add_argument('--exp_tag', type=str, default='codetest', help="Experiment tag")
+    parser.add_argument('--exp_tag', type=str, default='test_LR3', help="Experiment tag")
 
     return parser.parse_args()
 
@@ -59,10 +59,10 @@ if __name__ == '__main__':
                     exp_name=f"PPO_1M_{exp_tag}_{i}",
                     exp_name_val=f"PPO_1M_{exp_tag}_M{args.num_targets}_{i}",
                     gym_params=env_params,
-                    track=True,
+                    track=False,
                     seed=10 * 1,
                     max_episode_steps=2000,
-                    num_episodes=1000,
+                    num_episodes=500,
                     capture_video=False,
                     render=False,
                     num_steps=int(128 * 128 / 32),  # 128*128/num_envs
@@ -72,7 +72,7 @@ if __name__ == '__main__':
                     num_validation_episodes=100,
                     ent_coef=0.00,
                     anneal_lr=False,
-                    num_envs=8,  # 32
+                    num_envs=32,  # 32
                     )
 
         agent.train()
