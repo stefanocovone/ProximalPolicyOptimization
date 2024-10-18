@@ -101,7 +101,7 @@ class AgentResults:
         Load validation data for the agent.
         """
         for i in range(self.sessions):
-            filename = f"{self.file_prefix}_{i + 1}_validation.npz"
+            filename = f"{self.file_prefix}_M7_{i + 1}_validation.npz"
             file_path = os.path.join(f"./runs/{self.file_prefix}_{i + 1}", filename)
 
             if not os.path.exists(file_path):
@@ -115,8 +115,12 @@ class AgentResults:
             episode_lengths = validation_results.get("episode_lengths", None)
 
             if episode_lengths is None:
-                print(f"Episode lengths not found in {file_path}. Unable to process variable-length episodes.")
-                continue
+                print(
+                    f"Episode lengths not found in {file_path}. Setting default episode length to 2000 for all episodes.")
+                # Determine the number of episodes from the observations array
+                num_episodes = observations.shape[0]
+                # Create an array of episode lengths, all set to 2000
+                episode_lengths = np.full(num_episodes, 2000, dtype=int)
 
             # Process observations and actions for variable-length episodes
             observations_list = [observations[i, :length] for i, length in enumerate(episode_lengths)]
@@ -141,7 +145,7 @@ class AgentResults:
             observations_list (list): List of observations per episode.
 
         Returns:
-            list: Settling times per episode.
+            np.ndarray: Settling times per episode.
         """
         eta = 7
         settling_times = []
@@ -156,7 +160,7 @@ class AgentResults:
             else:
                 settling_time = len(obs)
             settling_times.append(settling_time)
-        return settling_times
+        return np.array(settling_times)
 
     def compute_cooperative_metric(self, actions_list):
         """

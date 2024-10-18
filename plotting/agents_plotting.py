@@ -302,7 +302,7 @@ def plot_training_metrics(*agents, labels=None, filename=None):
     stds = [[stat.std for stat in stat_list] for stat_list in stats]
 
     # Print and store observations in results.txt
-    with open("results.txt", "w") as file:
+    with open("../results.txt", "w") as file:
         for j, agent in enumerate(agents):
             agent_prefix = agent.file_prefix
             file.write(f"Agent: {agent_prefix}\n")

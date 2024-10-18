@@ -144,22 +144,13 @@ def _compute_value_loss(new_value, clip_vloss, clip_coef, b_returns, b_values, m
 
 
 def _remove_dir(directory):
-    """
-    Removes a directory and its contents.
-
-    Args:
-        directory (str): Path to the directory to remove.
-    """
     if os.path.exists(directory):
-        for filename in os.listdir(directory):
-            file_path = os.path.join(directory, filename)
-            try:
-                if os.path.isfile(file_path) or os.path.islink(file_path):
-                    os.unlink(file_path)
-                elif os.path.isdir(file_path):
-                    shutil.rmtree(file_path)
-            except Exception as e:
-                print(f"Failed to delete {file_path}. Reason: {e}")
+        for item in os.listdir(directory):
+            item_path = os.path.join(directory, item)
+            if os.path.isfile(item_path) and item.startswith("events"):
+                os.unlink(item_path)
+            elif os.path.isdir(item_path):
+                shutil.rmtree(item_path)
 
 
 def reshape_tensor(tensor, episode_length):
@@ -436,13 +427,13 @@ class PPO:
                     break  # Exit the time step loop if we've collected enough episodes
 
             # Adjust tensors if episode limit was reached early
-            actual_steps = step + 1
-            obs = obs[:actual_steps]
-            actions = actions[:actual_steps]
-            log_probs = log_probs[:actual_steps]
-            rewards = rewards[:actual_steps]
-            dones = dones[:actual_steps]
-            values = values[:actual_steps]
+            # actual_steps = step + 1
+            # obs = obs[:actual_steps]
+            # actions = actions[:actual_steps]
+            # log_probs = log_probs[:actual_steps]
+            # rewards = rewards[:actual_steps]
+            # dones = dones[:actual_steps]
+            # values = values[:actual_steps]
 
             # Compute advantages and returns
             advantages, returns = self._compute_advantage(next_obs, rewards, next_done, dones, values)
@@ -615,7 +606,12 @@ class PPO:
                     current_episodes[env_idx] = current_episode
 
                 # Collect data for the current episode
-                current_episodes[env_idx]['observations'].append(next_obs_np[env_idx])
+                # current_episodes[env_idx]['observations'].append(next_obs_np[env_idx])
+                if ("final_info" in info.keys()) and (info['_final_info'][env_idx]):
+                    obs_batch = info['final_info'][env_idx]['obs_batch']
+                else:
+                    obs_batch = info['obs_batch'][env_idx]
+                current_episodes[env_idx]['observations'].extend(obs_batch)
                 current_episodes[env_idx]['actions'].append(action[env_idx].cpu().numpy())
                 current_episodes[env_idx]['rewards'].append(reward[env_idx])
 
@@ -635,22 +631,24 @@ class PPO:
                 break  # Exit outer loop as well
 
         # Process and save the collected episodes
-        episode_lengths = np.array([len(episode['observations']) for episode in episodes])
+        episode_lengths = np.array([len(episode['actions']) for episode in episodes])
         max_length = max(episode_lengths)
         num_collected_episodes = len(episodes)
+        selection_rate = self.gym_params['target_selection_rate']
 
         # Prepare arrays for padded data
         obs_shape = episodes[0]['observations'][0].shape
         action_shape = episodes[0]['actions'][0].shape
 
-        obs_padded = np.zeros((num_collected_episodes, max_length) + obs_shape, dtype=np.float32)
+        obs_padded = np.zeros((num_collected_episodes, max_length *
+                               selection_rate) + obs_shape, dtype=np.float32)
         actions_padded = np.zeros((num_collected_episodes, max_length) + action_shape, dtype=np.float32)
         rewards_padded = np.zeros((num_collected_episodes, max_length), dtype=np.float32)
         cumulative_rewards = np.zeros(num_collected_episodes, dtype=np.float32)
 
         for i, episode in enumerate(episodes):
-            length = len(episode['observations'])
-            obs_padded[i, :length] = np.stack(episode['observations'])
+            length = len(episode['actions'])
+            obs_padded[i, :length * selection_rate] = np.stack(episode['observations'])
             actions_padded[i, :length] = np.stack(episode['actions'])
             rewards_padded[i, :length] = np.array(episode['rewards'])
             cumulative_rewards[i] = sum(episode['rewards'])

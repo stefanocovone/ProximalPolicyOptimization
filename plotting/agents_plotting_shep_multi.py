@@ -6,24 +6,24 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
 FIGURES_FOLDER = './Figures/'
 
+def cart_to_polar(observations, num_herders=2):
 
-def cart_to_polar(observations):
-    # Rescale all the quantities to +-region_length
-    observations = np.array(observations) * 60
+    # The shape of the observations is (num_episodes, num_steps, 2(N+M))
 
-    # Check if the shape is (100, 1200, 4)
-    if observations.shape[-1] != 4:
-        raise ValueError("The last dimension of the input observations must be of size 4")
+    #Extract herder and target positions:
 
-    # Extract the herder-target vector components and the target position components
-    delta_x = observations[..., 0]
-    delta_y = observations[..., 1]
-    target_x = observations[..., 2]
-    target_y = observations[..., 3]
+    num_targets = int(observations.shape[-1]/2 - num_herders)
 
-    # Reconstruct the herder position
-    herder_x = target_x - delta_x
-    herder_y = target_y - delta_y
+    herder_pos = observations[..., :num_herders*2].reshape(*observations.shape[:2], num_herders, 2)
+    target_pos = observations[..., num_herders*2:].reshape(*observations.shape[:2], num_targets, 2)
+
+    # Reconstruct the herders position
+    herder_x = herder_pos[..., 0]
+    herder_y = herder_pos[..., 1]
+
+    # Reconstruct the targets position
+    target_x = target_pos[..., 0]
+    target_y = target_pos[..., 1]
 
     # Compute polar coordinates for the herder position
     radius_herder = np.sqrt(herder_x ** 2 + herder_y ** 2)
@@ -33,17 +33,21 @@ def cart_to_polar(observations):
     radius_target = np.sqrt(target_x ** 2 + target_y ** 2)
     angle_target = np.arctan2(target_y, target_x)
 
-    # Combine the polar coordinates into the desired output format
-    polar_coords = np.stack((radius_herder, angle_herder, radius_target, angle_target), axis=-1)
+    herder_polar = np.stack((radius_herder, angle_herder), axis=-1)
+    target_polar = np.stack((radius_target, angle_target), axis=-1)
 
-    return polar_coords
+    polar_coords = np.concatenate((herder_polar, target_polar), axis=-2)
+
+    return polar_coords, herder_polar, target_polar
 
 
-def compute_settling_time_legacy(obs):
-    eta = 5.5
+def compute_settling_time(obs):
+    eta = 7
 
     # Compute the norm of each state in the obs array
-    state_norms = obs[..., 2]
+    targets_norms = obs[..., 0]
+
+    state_norms = np.max(targets_norms, axis=-1)
 
     # Create a boolean mask to identify states inside the goal region
     inside_goal_mask = state_norms < eta
@@ -51,49 +55,10 @@ def compute_settling_time_legacy(obs):
     # Reverse the boolean mask along the steps axis
     reversed_mask = np.flip(inside_goal_mask, axis=1).astype(int)
     # Find the index of the first occurrence of True in the reversed mask
-    settling_indices = 1200 - np.argmin(reversed_mask, axis=1)
+    settling_indices = 2000 - np.argmin(reversed_mask, axis=1)
 
     # Convert indices to settling times
     settling_times = settling_indices
-
-    return settling_times
-
-
-def compute_settling_time(positions, threshold=5):
-    """
-    Compute the settling time for each episode.
-    The settling time is defined as the minimum timestep t_s in which target_radius[t_s] is inside
-    the goal region and the average radius between t_s and t_f is still inside the goal region.
-
-    Parameters:
-    positions (numpy.ndarray): A 3D array of shape (num_episodes, episode_steps, states) representing positions.
-    threshold (float): The threshold below which the average position must be.
-
-    Returns:
-    numpy.ndarray: A 1D array of settling times for each episode.
-    """
-
-    positions = positions[..., 2]
-    num_episodes, episode_steps = positions.shape
-
-    # Calculate the cumulative sum from the end to the start
-    cumulative_sum = np.cumsum(positions[:, ::-1], axis=1)[:, ::-1]
-
-    # Calculate the number of elements from each step to the end
-    step_counts = np.arange(episode_steps, 0, -1)
-
-    # Calculate the running average from each step to the end
-    running_avg = cumulative_sum / step_counts
-
-    # Check both conditions: position at t_s and running average from t_s to the end
-    condition_met = (positions < threshold) & (running_avg < threshold)
-
-    # Find the first index where both conditions are met
-    settling_times = np.argmax(condition_met, axis=1)
-
-    # Handle episodes where the condition is never met
-    not_found_mask = np.all(~condition_met, axis=1)
-    settling_times[not_found_mask] = episode_steps
 
     return settling_times
 
@@ -103,8 +68,7 @@ def compute_successful_episode(settling_times, threshold):
     successful_episode = np.array((settling_times < threshold)).astype(int)
     return successful_episode
 
-
-def terminal_episode(vector, n=10):
+def terminal_episode(vector, n=20):
     # Find the indices of the first occurrence of n consecutive True values
     succession_indices = np.where(np.convolve(vector, np.ones(n), mode='valid') == n)[0]
 
@@ -115,8 +79,32 @@ def terminal_episode(vector, n=10):
         return 100000
 
 
-Data = namedtuple('Data', ['mean', 'std'])
+def compute_cooperative_metric(actions):
+    """
+    Compute the cooperative metric (CM) for a given set of herder actions.
 
+    Parameters:
+    actions (numpy array): A 3D numpy array of shape (episodes, episode_length, num_herders)
+                           where actions[e, t, h] is the action taken by herder h in episode e at time step t.
+
+    Returns:
+    numpy array: A 1D numpy array of shape (episodes,) containing the average CM for each episode.
+    """
+    episodes, episode_length = actions.shape
+    num_herders = 1
+
+    cm = np.zeros((episodes, episode_length))
+
+    for e in range(episodes):
+        for t in range(episode_length):
+            unique_actions = np.unique(actions[e, t])
+            cm[e, t] = len(unique_actions) / num_herders
+    average_cm = np.mean(cm, axis=1)
+
+    return average_cm
+
+
+Data = namedtuple('Data', ['mean', 'std'])
 
 class AgentResults:
     def __init__(self, agent_id, env_id, sessions=1):
@@ -131,6 +119,7 @@ class AgentResults:
         self.observations_v = None
         self.actions = None
         self.successful_episodes = None
+        self.cooperative_metric = None
 
     def load_training(self):
         self.rewards = []
@@ -140,6 +129,12 @@ class AgentResults:
         for i in range(self.sessions):
             filename = f"{self.file_prefix}_{i + 1}_training.npz"
             file_path = os.path.join(f"./runs/{self.file_prefix}_{i + 1}", filename)
+
+            # Check if the file exists
+            if not os.path.exists(file_path):
+                print(f"File not found: {file_path}. Skipping this session.")
+                continue
+
             training_results = np.load(file_path)
 
             self.rewards.append(training_results["cumulative_rewards"])
@@ -148,7 +143,7 @@ class AgentResults:
 
             # compute terminal episodes
             # settling_times_t = compute_settling_time(self.observations_t[i])
-            successful_episode_t = compute_successful_episode(settling_times, 1000)
+            successful_episode_t = compute_successful_episode(settling_times, 1900)
             terminal_episode_t = terminal_episode(successful_episode_t)
             self.terminal_episodes.append(terminal_episode_t)
 
@@ -157,22 +152,31 @@ class AgentResults:
         self.actions = []
         self.observations_v = []
         self.successful_episodes = []
+        self.cooperative_metric = []
 
         for i in range(self.sessions):
-            filename = f"{self.file_prefix}_{i + 1}_validation.npz"
+            filename = f"{self.file_prefix}_M7_{i + 1}_validation.npz"
             file_path = os.path.join(f"./runs/{self.file_prefix}_{i + 1}", filename)
+
+            # Check if the file exists
+            if not os.path.exists(file_path):
+                print(f"File not found: {file_path}. Skipping this session.")
+                continue
+
             validation_results = np.load(file_path)
 
-            observations_v = cart_to_polar(validation_results["observations"].squeeze())
+            observations_v, herder_pos, target_pos = cart_to_polar(validation_results["observations"].squeeze())
             self.observations_v.append(observations_v)
-            self.actions.append(validation_results["control_actions"].squeeze())
-
-            settling_times_v = compute_settling_time(observations_v)
+            actions = validation_results["control_actions"].squeeze()
+            self.actions.append(actions)
+            cooperative_metric = compute_cooperative_metric(actions)
+            self.cooperative_metric.append(cooperative_metric)
+            settling_times_v = compute_settling_time(target_pos)
             self.settling_times.append(settling_times_v)
 
-            self.successful_episodes.append(compute_successful_episode(settling_times_v, 1000))
+            self.successful_episodes.append(compute_successful_episode(settling_times_v, 1950))
 
-        self.actions = np.clip(self.actions, -8, 8)
+        # self.actions = np.clip(self.actions, -8, 8)
 
     def average_reward(self):
         avg_rewards = []
@@ -209,7 +213,7 @@ class AgentResults:
     def success_rate(self):
         success_rates = []
         for success in self.successful_episodes:
-            success_rate = np.mean(success)*100
+            success_rate = np.mean(success) * 100
             success_rates.append(success_rate)
         mean = np.mean(success_rates)
         std = np.std(success_rates)
@@ -225,7 +229,6 @@ class AgentResults:
         std = np.std(control_norm)
         return Data(mean, std)
 
-
 def moving_average(data, window_size):
     moving_avg = np.zeros_like(data)
     for i, sequence in enumerate(data):
@@ -234,7 +237,6 @@ def moving_average(data, window_size):
             end_index = j + 1
             moving_avg[i][j] = np.mean(sequence[start_index:end_index])
     return moving_avg
-
 
 def plot_rewards(*agents, labels=None, filename=None, moving_avg_size=100, training_length=10000):
     fig, ax = plt.subplots(figsize=(10, 5))
@@ -264,7 +266,6 @@ def plot_rewards(*agents, labels=None, filename=None, moving_avg_size=100, train
 
     plt.show()
 
-
 def plot_training_metrics(*agents, labels=None, filename=None):
     # Define the observations
     metrics = ['$J_{avg}^\pi$', '$J_{avg,t}^\pi$', 'Episode']
@@ -274,7 +275,7 @@ def plot_training_metrics(*agents, labels=None, filename=None):
     stds = [[stat.std for stat in stat_list] for stat_list in stats]
 
     # Print and store observations in results.txt
-    with open("results.txt", "w") as file:
+    with open("../results.txt", "w") as file:
         for j, agent in enumerate(agents):
             agent_prefix = agent.file_prefix
             file.write(f"Agent: {agent_prefix}\n")
@@ -303,33 +304,67 @@ def plot_training_metrics(*agents, labels=None, filename=None):
         plt.savefig(os.path.join(FIGURES_FOLDER, 'training_metrics.pdf'), format='pdf')
     plt.show()
 
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+
+FIGURES_FOLDER = './Figures/'  # Ensure this directory exists or adjust as needed
+
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+
 
 def plot_validation_metrics(*agents, labels=None, filename=None):
-    # Define the observations
-    metrics = ['Timestep', '%', 'velocity']
-    stats = [[agent.settling_time(),
-              agent.success_rate(),
-              agent.control_effort()] for agent in agents]
+    metrics = ['Timestep', '%', '']
+    fig, axs = plt.subplots(1, 3, figsize=(9, 3))
 
-    means = [[stat.mean for stat in stat_list] for stat_list in stats]
-    stds = [[stat.std for stat in stat_list] for stat_list in stats]
+    # Aggiungi un piccolo offset orizzontale per separare i punti
+    x_offsets = np.linspace(-0, 0, len(agents))
 
-    # Plotting
-    fig, axs = plt.subplots(1, 3, figsize=(10, 3))
+    for j, agent in enumerate(agents):
+        settling_times = agent.settling_times
+        success_rates = agent.successful_episodes
+        cooperative_metrics = agent.cooperative_metric
 
-    for i, metric in enumerate(metrics):
-        for j, agent in enumerate(agents):
-            agent_label = labels[j] if labels else "agent_name"
-            axs[i].errorbar([agent_label], [means[j][i]], yerr=[stds[j][i]], fmt='o', capsize=5, label=metric)
-            print(f"Mean {metric}: {means[j][i]}, Std {metric}: {stds[j][i]}")  # Print mean and std
-        axs[i].grid(True)
-        axs[i].set_ylabel(metric)
+        for i in range(len(settling_times)):
+            if len(settling_times[i]) == 0:
+                continue
 
-    axs[0].set_title('Settling Time')
-    axs[1].set_title('Success Rate')
-    axs[2].set_title('Control Effort')
+            mean_settling_time = np.mean(settling_times[i])
+            std_settling_time = np.std(settling_times[i])
+            mean_success_rate = np.mean(success_rates[i]) * 100
+            std_success_rate = np.std(success_rates[i]) * 0
+            mean_control_effort = np.mean(cooperative_metrics[i])
+            std_control_effort = np.std(cooperative_metrics[i])
+
+            agent_label = labels[j] if labels else agent.file_prefix
+            session_label = f"{agent_label}"
+
+            # Applica l'offset orizzontale
+            axs[0].errorbar([j + x_offsets[j]], [mean_settling_time], yerr=[std_settling_time], fmt='o', capsize=5,
+                            label=f'{metrics[0]} {session_label}')
+            axs[1].errorbar([j + x_offsets[j]], [mean_success_rate], yerr=[std_success_rate], fmt='o', capsize=5,
+                            label=f'{metrics[1]} {session_label}')
+            axs[2].errorbar([j + x_offsets[j]], [mean_control_effort], yerr=[std_control_effort], fmt='o', capsize=5,
+                            label=f'{metrics[2]} {session_label}')
+
+    # Configura il layout degli assi
+    for ax, metric in zip(axs, metrics):
+        ax.grid(True)
+        ax.set_ylabel(metric)
+        ax.set_xticks(range(len(agents)))
+        ax.set_xticklabels([labels[j] if labels else agent.file_prefix for j in range(len(agents))])
+
+        # Imposta i limiti per avere più spazio sugli estremi
+        ax.set_xlim(-0.5, len(agents) - 0.5)  # Aggiungi margine agli estremi
+
+    axs[0].set_title('Settling Time (M=5)')
+    axs[1].set_title('Success Rate (M=5)')
+    axs[2].set_title('Cooperative metric (M=5)')
 
     axs[1].set_ylim(0, 110)
+    axs[2].set_ylim(0, 1.10)
 
     plt.tight_layout()
     if filename:

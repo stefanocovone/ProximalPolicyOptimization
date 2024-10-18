@@ -102,7 +102,7 @@ def plot_training_metrics(agents, labels=None, filename=None):
     colors = [cmap(i) for i in range(num_agents)]
 
     # Print and store observations in results.txt
-    with open("results.txt", "w") as file:
+    with open("../results.txt", "w") as file:
         for i, metric in enumerate(metrics):
             file.write(f"Metric: {metric}\n")
             for j, agent in enumerate(agents):
@@ -174,39 +174,70 @@ def plot_validation_metrics(agents, labels=None, filename=None):
     metrics = ['Settling Time', 'Success Rate', 'Cooperative Metric']
     data_functions = ['settling_time_data', 'success_rate_data', 'cooperative_metric_data']
 
-    means = []
-    stds = []
+    # Collect data for each agent and metric
+    stats = []
     for agent in agents:
-        agent_means = []
-        agent_stds = []
+        agent_stats = []
         for func_name in data_functions:
             data = getattr(agent, func_name)()
-            agent_means.append(data.mean)
-            agent_stds.append(data.std)
-        means.append(agent_means)
-        stds.append(agent_stds)
+            agent_stats.append(data)
+        stats.append(agent_stats)
 
-    means = np.array(means)
-    stds = np.array(stds)
+    # Transpose stats to have metrics as the first index
+    metrics_stats = list(zip(*stats))  # metrics_stats[metric][agent]
 
-    x = np.arange(len(metrics))
-    total_width = 0.8
-    width = total_width / len(agents)
-    x_offsets = np.linspace(-total_width / 2 + width / 2, total_width / 2 - width / 2, len(agents))
+    # For each metric, extract means and stds
+    means = [[stat.mean for stat in metric_stats] for metric_stats in metrics_stats]
+    stds = [[stat.std for stat in metric_stats] for metric_stats in metrics_stats]
 
-    fig, ax = plt.subplots(figsize=(10, 5))
+    # Define colors for each agent
+    num_agents = len(agents)
+    # Use a colormap to generate distinct colors
+    cmap = plt.get_cmap('tab10')
+    colors = [cmap(i) for i in range(num_agents)]
 
-    for idx, (mean_values, std_values) in enumerate(zip(means, stds)):
-        label = labels[idx] if labels else agents[idx].file_prefix
-        ax.bar(x + x_offsets[idx], mean_values, yerr=std_values, width=width, capsize=5, label=label)
+    # Plotting
+    num_metrics = len(metrics)
+    fig, axs = plt.subplots(1, num_metrics, figsize=(10, 3))
 
-    ax.set_xticks(x)
-    ax.set_xticklabels(metrics)
-    ax.set_ylabel('Value')
-    ax.set_title('Validation Metrics')
-    ax.legend()
-    ax.grid(True)
+    if num_metrics == 1:
+        axs = [axs]  # Ensure axs is iterable
 
+    x_labels = [labels[j] if labels else agents[j].file_prefix for j in range(num_agents)]
+
+    # Center positions for error bars
+    center = 0.5
+    spread = 0.05  # Adjust this value to control the spacing between error bars
+    if num_agents > 1:
+        x_positions = np.linspace(center - spread, center + spread, num_agents)
+    else:
+        x_positions = [center]  # If only one agent, place it at the center
+
+    for i, metric in enumerate(metrics):
+        ax = axs[i]
+        mean_values = means[i]
+        std_values = stds[i]
+
+        # Plot error bars
+        for j in range(num_agents):
+            ax.errorbar(x_positions[j], mean_values[j], yerr=std_values[j], fmt='o', capsize=5,
+                        color=colors[j], markersize=8)
+
+        # Center the error bars under each agent label
+        ax.set_xticks(x_positions)
+        ax.set_xticklabels(x_labels)
+        ax.grid(True)
+        ax.set_ylabel(metric)
+        ax.set_title(metric)
+
+        # Adjust x-axis limits to focus on the center area
+        ax.set_xlim(center - spread * 2, center + spread * 2)
+
+        # Print mean and std for each agent and metric
+        for j in range(num_agents):
+            print(f"Mean {metric} for {x_labels[j]}: {mean_values[j]}, Std: {std_values[j]}")
+
+    # Remove the legend as per your style
     plt.tight_layout()
     if filename:
         plt.savefig(os.path.join(FIGURES_FOLDER, filename), format='pdf')

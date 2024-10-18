@@ -15,7 +15,7 @@ if not os.path.exists(FIGURES_FOLDER):
 # Parameters
 sessions = 3
 env_id = "Shepherding-v0"
-agents_list = ["PPO_1M_test_LR3", "PPO_2M"]
+agents_list = ["PPO_1M_random2", "PPO_2M"]
 agents_label = ["Data-driven", "BB"]
 agents = []
 
@@ -27,9 +27,9 @@ for agent_type in agents_list:
     agents.append(agent)
 
 # Plotting
-plot_rewards(agents, labels=agents_label, filename="shepherdingPPO_L3_rewards.pdf", moving_avg_size=1000,
-             training_length=200000)
-plot_training_metrics(agents, labels=agents_label, filename="shepherdingPPO_L3_training.pdf")
+# plot_rewards(agents, labels=agents_label, filename="shepherdingPPO_L3_rewards.pdf", moving_avg_size=1000,
+#              training_length=200000)
+# plot_training_metrics(agents, labels=agents_label, filename="shepherdingPPO_L3_training.pdf")
 plot_validation_metrics(agents, labels=agents_label, filename="shepherdingPPO_L3_validation.pdf")
 
 # Plot data for the first agent

@@ -18,7 +18,7 @@ def parse_arguments():
     parser.add_argument('--l_r', type=float, default=0.0005, help="Learning rate")
 
     # Optional argument for experiment tag
-    parser.add_argument('--exp_tag', type=str, default='test_LR3', help="Experiment tag")
+    parser.add_argument('--exp_tag', type=str, default='all_targets', help="Experiment tag")
 
     return parser.parse_args()
 
@@ -62,14 +62,14 @@ if __name__ == '__main__':
                     track=False,
                     seed=10 * 1,
                     max_episode_steps=2000,
-                    num_episodes=500,
+                    num_episodes=200000,
                     capture_video=False,
                     render=False,
                     num_steps=int(128 * 128 / 32),  # 128*128/num_envs
                     num_minibatches=128,
                     gamma=0.98,
                     learning_rate=args.l_r,     # 5e-4
-                    num_validation_episodes=100,
+                    num_validation_episodes=10,
                     ent_coef=0.00,
                     anneal_lr=False,
                     num_envs=32,  # 32
